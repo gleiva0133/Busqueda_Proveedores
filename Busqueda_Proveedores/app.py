@@ -145,7 +145,7 @@ Máximo 5 empresas."""
         try:
             resp = requests.post(url, headers=headers, json=body, timeout=40)
             if resp.status_code == 429:
-                time.sleep(8 * (intento + 1))  # espera progresiva antes de reintentar
+                time.sleep(15 * (intento + 1))  # espera progresiva antes de reintentar: 15s, 30s, 45s
                 continue
             resp.raise_for_status()
             data = resp.json()
@@ -185,6 +185,12 @@ with st.sidebar:
             "2. Inicia sesión con tu cuenta de Google\n"
             "3. Haz clic en 'Create API key' y cópiala\n"
             "4. Pégala abajo\n\n"
+            "⚠️ **Si te aparecen errores 429 (límite de peticiones) constantemente:** "
+            "la función de búsqueda web de Gemini suele requerir que el proyecto de "
+            "Google Cloud asociado a tu API key tenga **facturación habilitada** (no "
+            "necesitas gastar dinero, solo activarla) para desbloquear una cuota "
+            "normal. Revisa esto en [Google AI Studio → Billing](https://aistudio.google.com/) "
+            "o en la consola de Google Cloud, sección 'Facturación'.\n\n"
             "Si no la tienes todavía, no pasa nada: la app funciona igual, solo "
             "usará tu base de datos local."
         )
@@ -287,7 +293,7 @@ if df_prov is not None and archivo_requerimientos:
                             df_req[df_req['CATEGORIA'] == cat]['Nombre Material'].dropna().astype(str).unique()[:5]
                         )
                         st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, gemini_api_key, debug=debug_ia)
-                        time.sleep(4)  # pausa breve para no exceder el límite gratuito de peticiones/minuto
+                        time.sleep(12)  # pausa más larga: el grounding (búsqueda web) tiene cuota más estricta
                     barra_ia.progress((i + 1) / len(categorias_unicas))
 
             resultados = []
