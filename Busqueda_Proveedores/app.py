@@ -4,6 +4,11 @@ import numpy as np
 from datetime import datetime
 import re
 import io
+import os
+import json
+import requests
+import unicodedata
+import plotly.express as px
 
 # ==========================================
 # 1. CONFIGURACIÓN DE LA PÁGINA
@@ -11,6 +16,11 @@ import io
 st.set_page_config(page_title="Buscador de Proveedores Mineros", layout="wide")
 st.title("⛏️ Buscador de Proveedores Mineros - Supply Chain")
 st.markdown("Sube tus archivos para generar un análisis estratégico de proveedores locales, nacionales e internacionales.")
+
+# Carpeta local para persistir el archivo de proveedores mientras la app esté activa
+PERSIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_local")
+os.makedirs(PERSIST_DIR, exist_ok=True)
+PERSIST_PATH = os.path.join(PERSIST_DIR, "proveedores_guardado.csv")
 
 # ==========================================
 # 2. DEFINICIÓN DE FUNCIONES
@@ -26,13 +36,14 @@ def detectar_columnas(df, columnas_busqueda):
                 break
     return df.rename(columns=mapeo)
 
+
 def clasificar_requerimiento(row):
     """Clasifica el requerimiento según descripción y especificaciones"""
     texto = str(row.get('Nombre Material', '')).lower() + ' ' + \
             str(row.get('Especif1', '')).lower() + ' ' + \
             str(row.get('Especif2', '')).lower() + ' ' + \
             str(row.get('Especif3', '')).lower()
-    
+
     if any(x in texto for x in ['electrodo', 'soldadura', '7018', '6010', 'disco', 'desbaste']):
         return 'SOLDADURA Y ABRASIVOS'
     elif any(x in texto for x in ['rodamiento', 'bearing', 'ruliman', 'cojinete']):
@@ -56,8 +67,22 @@ def clasificar_requerimiento(row):
     else:
         return 'FERRETERÍA GENERAL'
 
+
+def quitar_acentos(texto):
+    return ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
+
+
+def encontrar_columna_asignacion(df):
+    """Busca la columna de fecha de asignación aunque el nombre varíe ligeramente"""
+    for col in df.columns:
+        limpio = quitar_acentos(col).lower()
+        if 'asignacion' in limpio:
+            return col
+    return None
+
+
 def buscar_proveedores_categoria(categoria, df_proveedores):
-    """Busca proveedores según la categoría del material"""
+    """Busca proveedores según la categoría del material, dentro de la base local"""
     terminos_busqueda = {
         'SOLDADURA Y ABRASIVOS': ['SOLDADURA', 'ELECTRODO', 'ABRASIVO', 'DISCO', 'INDURA', 'AGA'],
         'RODAMIENTOS Y TRANSMISIÓN': ['RODAMIENTO', 'RULIMAN', 'TRANSMISION', 'MECANICA'],
@@ -71,50 +96,183 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
         'QUÍMICOS Y LABORATORIO': ['QUIMIC', 'LAB', 'INDURA', 'LINDE'],
         'FERRETERÍA GENERAL': ['FERRETER', 'HERRAMIENT', 'GENERAL']
     }
-    
+
     terminos = terminos_busqueda.get(categoria, ['FERRETER'])
     mask = pd.Series(False, index=df_proveedores.index)
     columnas_busqueda = ['PROVEEDOR DE GRUPOS', 'MARCAS', 'OFERTAN', 'RAZÓN SOCIAL', 'NOMBRE COMERCIAL']
-    
+
     for col in columnas_busqueda:
         if col in df_proveedores.columns:
             for termino in terminos:
                 mask |= df_proveedores[col].fillna('').astype(str).str.contains(termino, case=False, na=False)
-    
+
     return df_proveedores[mask].copy()
 
+
+def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key):
+    """
+    Usa un modelo Qwen (Alibaba Cloud DashScope) con búsqueda web activada
+    para encontrar proveedores adicionales, fuera de la base local del usuario.
+    Devuelve una lista de dicts. Si algo falla, devuelve lista vacía y avisa.
+    """
+    if not api_key:
+        return []
+
+    url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    prompt = f"""Eres un asistente de compras (supply chain) para una empresa minera en Ecuador.
+Busca en internet EMPRESAS PROVEEDORAS reales que vendan o distribuyan productos de la categoría: {categoria}.
+Ejemplos de materiales concretos que se necesitan: {ejemplos_materiales}.
+Prioriza proveedores en Ecuador o la región andina, pero incluye internacionales si son relevantes.
+Responde ÚNICAMENTE con un JSON válido (una lista), sin texto adicional ni explicaciones, con este formato exacto:
+[{{"nombre_empresa": "...", "ciudad_pais": "...", "sitio_web_o_contacto": "...", "descripcion_breve": "..."}}]
+Si no encuentras nada confiable, responde exactamente: []
+Máximo 5 empresas."""
+
+    body = {
+        "model": "qwen-plus",
+        "messages": [{"role": "user", "content": prompt}],
+        "enable_search": True,
+        "temperature": 0.3
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=40)
+        resp.raise_for_status()
+        data = resp.json()
+        contenido = data["choices"][0]["message"]["content"].strip()
+        # Limpia posibles bloques de código ```json ... ```
+        contenido = re.sub(r"^```(json)?|```$", "", contenido, flags=re.MULTILINE).strip()
+        proveedores = json.loads(contenido)
+        return proveedores if isinstance(proveedores, list) else []
+    except Exception as e:
+        st.warning(f"⚠️ No se pudo obtener resultados de IA para la categoría '{categoria}': {e}")
+        return []
+
+
 # ==========================================
-# 3. INTERFAZ DE STREAMLIT
+# 3. BARRA LATERAL: CONFIGURACIÓN DE IA (OPCIONAL)
 # ==========================================
 
+with st.sidebar:
+    st.header("🔑 Búsqueda con IA (opcional)")
+    with st.expander("¿Qué es esto?"):
+        st.markdown(
+            "Además de tu base de proveedores, la app puede pedirle a un modelo "
+            "**Qwen (Alibaba Cloud / DashScope)** que busque en internet empresas "
+            "proveedoras adicionales para cada categoría, fuera de tu listado.\n\n"
+            "**Para usarlo necesitas una API key:**\n"
+            "1. Crea una cuenta en [Alibaba Cloud Model Studio](https://dashscope.console.aliyun.com/)\n"
+            "2. Genera una API Key (sección 'API-KEY管理' / 'API Key Management')\n"
+            "3. Pégala abajo\n\n"
+            "Si no la tienes todavía, no pasa nada: la app funciona igual, solo "
+            "usará tu base de datos local."
+        )
+    qwen_api_key = st.text_input("API Key de Qwen / DashScope", type="password", placeholder="sk-...")
+    usar_ia = st.checkbox("Buscar proveedores adicionales con IA", value=False,
+                           disabled=not qwen_api_key,
+                           help="Se activa solo si ingresas una API key arriba.")
+    if not qwen_api_key:
+        st.caption("Ingresa tu API key para habilitar esta opción.")
+
+# ==========================================
+# 4. CARGA Y PERSISTENCIA DEL ARCHIVO DE PROVEEDORES
+# ==========================================
+
+if "df_prov" not in st.session_state:
+    st.session_state.df_prov = None
+    if os.path.exists(PERSIST_PATH):
+        try:
+            df_guardado = pd.read_csv(PERSIST_PATH, encoding='utf-8-sig')
+            df_guardado = detectar_columnas(df_guardado, ['RAZÓN SOCIAL', 'CONTACTO', 'TELEFONO', 'CORREO'])
+            st.session_state.df_prov = df_guardado
+        except Exception:
+            st.session_state.df_prov = None
+
 col1, col2 = st.columns(2)
+
 with col1:
-    archivo_proveedores = st.file_uploader("📂 1. Sube tu base de proveedores (CSV)", type=['csv'])
+    if st.session_state.df_prov is not None:
+        st.success(f"✅ Base de proveedores en memoria ({len(st.session_state.df_prov)} registros).")
+        colb1, colb2 = st.columns(2)
+        with colb1:
+            reemplazar = st.checkbox("Subir un archivo nuevo (reemplazar)")
+        with colb2:
+            if st.button("🗑️ Eliminar archivo guardado"):
+                st.session_state.df_prov = None
+                if os.path.exists(PERSIST_PATH):
+                    os.remove(PERSIST_PATH)
+                st.rerun()
+    else:
+        reemplazar = True
+
+    archivo_proveedores = None
+    if reemplazar or st.session_state.df_prov is None:
+        archivo_proveedores = st.file_uploader("📂 1. Sube tu base de proveedores (CSV)", type=['csv'])
+        if archivo_proveedores is not None:
+            df_nuevo = pd.read_csv(archivo_proveedores, encoding='utf-8-sig')
+            df_nuevo.columns = [c.strip() for c in df_nuevo.columns]
+            df_nuevo = detectar_columnas(df_nuevo, ['RAZÓN SOCIAL', 'CONTACTO', 'TELEFONO', 'CORREO'])
+            st.session_state.df_prov = df_nuevo
+            df_nuevo.to_csv(PERSIST_PATH, index=False, encoding='utf-8-sig')
+            st.info("💾 Archivo guardado. No necesitarás volver a subirlo mientras la app siga activa.")
+
 with col2:
     archivo_requerimientos = st.file_uploader("📂 2. Sube tus requerimientos (Excel)", type=['xlsx', 'xls'])
 
-if archivo_proveedores and archivo_requerimientos:
+df_prov = st.session_state.df_prov
+
+# ==========================================
+# 5. PROCESAMIENTO
+# ==========================================
+
+if df_prov is not None and archivo_requerimientos:
     with st.spinner("⚙️ Procesando datos y cruzando información..."):
         try:
-            # Cargar datos desde los archivos subidos
-            df_prov = pd.read_csv(archivo_proveedores, encoding='utf-8-sig')
-            df_prov.columns = [col.strip() for col in df_prov.columns]
-            df_prov = detectar_columnas(df_prov, ['RAZÓN SOCIAL', 'CONTACTO', 'TELEFONO', 'CORREO'])
-            
             df_req = pd.read_excel(archivo_requerimientos, sheet_name='qryPOs_Temp')
             df_req.columns = df_req.columns.str.strip()
-            
+
             # Clasificar
             df_req['CATEGORIA'] = df_req.apply(clasificar_requerimiento, axis=1)
-            
+
+            # Cache de resultados de IA por categoría (para no repetir llamadas)
+            if "cache_ia" not in st.session_state:
+                st.session_state.cache_ia = {}
+
+            categorias_unicas = df_req['CATEGORIA'].unique()
+
+            # Detectar columna de fecha de asignación y calcular retraso (hoy - F Asignación)
+            col_fecha_asignacion = encontrar_columna_asignacion(df_req)
+            hoy = pd.Timestamp(datetime.now().date())
+            if col_fecha_asignacion:
+                df_req['_fecha_asignacion'] = pd.to_datetime(df_req[col_fecha_asignacion], errors='coerce')
+                df_req['_retraso_dias'] = (hoy - df_req['_fecha_asignacion']).dt.days
+            else:
+                df_req['_fecha_asignacion'] = pd.NaT
+                df_req['_retraso_dias'] = np.nan
+                st.warning("⚠️ No se encontró una columna de fecha de asignación en el Excel; "
+                           "los gráficos de retraso no estarán disponibles.")
+
+            if usar_ia and qwen_api_key:
+                st.write("🌐 Buscando proveedores adicionales con IA por categoría...")
+                barra_ia = st.progress(0)
+                for i, cat in enumerate(categorias_unicas):
+                    if cat not in st.session_state.cache_ia:
+                        ejemplos = ", ".join(
+                            df_req[df_req['CATEGORIA'] == cat]['Nombre Material'].dropna().astype(str).unique()[:5]
+                        )
+                        st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, qwen_api_key)
+                    barra_ia.progress((i + 1) / len(categorias_unicas))
+
             resultados = []
             barra_progreso = st.progress(0)
-            
+
             for idx, row in df_req.iterrows():
                 categoria = row['CATEGORIA']
                 material = row.get('Nombre Material', 'N/A')
                 prov_categoria = buscar_proveedores_categoria(categoria, df_prov)
-                
+
                 proveedores_info = []
                 for _, prov in prov_categoria.iterrows():
                     info = {
@@ -129,7 +287,9 @@ if archivo_proveedores and archivo_requerimientos:
                         'Región': prov.get('REGION', '')
                     }
                     proveedores_info.append(info)
-                
+
+                proveedores_ia_cat = st.session_state.cache_ia.get(categoria, []) if usar_ia else []
+
                 resultados.append({
                     'Num Ítem': row.get('Num Ítem', ''),
                     'Categoría': categoria,
@@ -140,21 +300,25 @@ if archivo_proveedores and archivo_requerimientos:
                     'Fecha Entrega': row.get('F Prevista de entrega', ''),
                     'Comprador': row.get('Comprador', ''),
                     'PO': row.get('Num PO', ''),
-                    'Num Proveedores': len(proveedores_info),
-                    'Proveedores': ", ".join([p['Nombre Comercial'] for p in proveedores_info[:3]]) # Muestra los primeros 3
+                    'F Asignación': row.get('_fecha_asignacion', pd.NaT),
+                    'Retraso (días)': row.get('_retraso_dias', np.nan),
+                    'Num Proveedores (Base propia)': len(proveedores_info),
+                    'Proveedores (Base propia)': ", ".join([p['Nombre Comercial'] for p in proveedores_info[:3]]),
+                    'Num Proveedores (IA)': len(proveedores_ia_cat),
+                    'Proveedores (IA)': ", ".join([p.get('nombre_empresa', '') for p in proveedores_ia_cat[:3]])
                 })
                 barra_progreso.progress((idx + 1) / len(df_req))
-            
+
             df_detalle = pd.DataFrame(resultados)
-            
+
             # Generar Excel en memoria
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_detalle.to_excel(writer, sheet_name='01_ANALISIS_DETALLADO', index=False)
-                
+
                 # Hoja de proveedores locales prioritarios
                 todos_provs = []
-                for cat in df_req['CATEGORIA'].unique():
+                for cat in categorias_unicas:
                     provs = buscar_proveedores_categoria(cat, df_prov)
                     for _, prov in provs.iterrows():
                         todos_provs.append({
@@ -166,24 +330,136 @@ if archivo_proveedores and archivo_requerimientos:
                             'Email': prov.get('CORREO', ''),
                             'Ciudad/Región': f"{prov.get('Ciudad OK', '')} - {prov.get('REGION', '')}"
                         })
-                
+
                 df_todos_provs = pd.DataFrame(todos_provs).drop_duplicates(subset=['RUC'])
                 df_todos_provs.to_excel(writer, sheet_name='02_BASE_PROVEEDORES', index=False)
-            
+
+                # Hoja de proveedores adicionales encontrados por IA
+                if usar_ia:
+                    ia_rows = []
+                    for cat in categorias_unicas:
+                        for p in st.session_state.cache_ia.get(cat, []):
+                            ia_rows.append({
+                                'Categoría': cat,
+                                'Nombre Empresa': p.get('nombre_empresa', ''),
+                                'Ciudad/País': p.get('ciudad_pais', ''),
+                                'Sitio web / Contacto': p.get('sitio_web_o_contacto', ''),
+                                'Descripción': p.get('descripcion_breve', '')
+                            })
+                    df_ia = pd.DataFrame(ia_rows)
+                    if not df_ia.empty:
+                        df_ia.to_excel(writer, sheet_name='03_PROVEEDORES_IA', index=False)
+
             st.success("✅ ¡Análisis completado con éxito!")
-            
-            # Botón de descarga
+
             st.download_button(
                 label="📥 Descargar Reporte Excel",
                 data=output.getvalue(),
                 file_name=f"ANALISIS_PROVEEDORES_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            
-            # Vista previa
+
             st.subheader("Vista previa del análisis (Primeros 5 ítems)")
             st.dataframe(df_detalle.head(), use_container_width=True)
-            
+
+            if usar_ia:
+                st.caption(
+                    "ℹ️ Los proveedores marcados como 'IA' no están verificados por tu empresa: "
+                    "provienen de una búsqueda web automática y deben validarse antes de contactarlos."
+                )
+
+            # ==========================================
+            # 6. GRÁFICOS
+            # ==========================================
+            st.markdown("---")
+            st.header("📊 Análisis Visual")
+
+            df_validas = df_detalle.dropna(subset=['Retraso (días)']).copy()
+
+            if col_fecha_asignacion and not df_validas.empty:
+                colg1, colg2 = st.columns(2)
+
+                with colg1:
+                    retraso_comprador = (
+                        df_validas.groupby('Comprador')['Retraso (días)']
+                        .mean().round(1).sort_values(ascending=False).reset_index()
+                    )
+                    fig1 = px.bar(
+                        retraso_comprador, x='Comprador', y='Retraso (días)',
+                        title='Retraso promedio por Comprador (días)',
+                        text='Retraso (días)', color='Retraso (días)',
+                        color_continuous_scale='Reds'
+                    )
+                    fig1.update_layout(xaxis_tickangle=-30)
+                    st.plotly_chart(fig1, use_container_width=True)
+
+                with colg2:
+                    items_comprador = df_detalle['Comprador'].value_counts().reset_index()
+                    items_comprador.columns = ['Comprador', 'Número de ítems']
+                    fig2 = px.bar(
+                        items_comprador, x='Comprador', y='Número de ítems',
+                        title='Número de ítems por Comprador',
+                        text='Número de ítems', color='Número de ítems',
+                        color_continuous_scale='Blues'
+                    )
+                    fig2.update_layout(xaxis_tickangle=-30)
+                    st.plotly_chart(fig2, use_container_width=True)
+
+                colg3, colg4 = st.columns(2)
+
+                with colg3:
+                    fig3 = px.box(
+                        df_validas, x='Comprador', y='Retraso (días)',
+                        title='Distribución del retraso por Comprador (dispersión)',
+                        points='all'
+                    )
+                    fig3.update_layout(xaxis_tickangle=-30)
+                    st.plotly_chart(fig3, use_container_width=True)
+
+                with colg4:
+                    fig4 = px.histogram(
+                        df_validas, x='Retraso (días)', nbins=20,
+                        title='Distribución general del retraso (días)'
+                    )
+                    st.plotly_chart(fig4, use_container_width=True)
+
+                colg5, colg6 = st.columns(2)
+
+                with colg5:
+                    retraso_categoria = (
+                        df_validas.groupby('Categoría')['Retraso (días)']
+                        .mean().round(1).sort_values(ascending=False).reset_index()
+                    )
+                    fig5 = px.bar(
+                        retraso_categoria, x='Categoría', y='Retraso (días)',
+                        title='Retraso promedio por Categoría (días)',
+                        text='Retraso (días)'
+                    )
+                    fig5.update_layout(xaxis_tickangle=-30)
+                    st.plotly_chart(fig5, use_container_width=True)
+
+                with colg6:
+                    items_categoria = df_detalle['Categoría'].value_counts().reset_index()
+                    items_categoria.columns = ['Categoría', 'Número de ítems']
+                    fig6 = px.pie(
+                        items_categoria, names='Categoría', values='Número de ítems',
+                        title='Distribución de ítems por Categoría'
+                    )
+                    st.plotly_chart(fig6, use_container_width=True)
+
+                fig7 = px.scatter(
+                    df_validas, x='Retraso (días)', y='Comprador', color='Categoría',
+                    size='Num Proveedores (Base propia)', hover_data=['Material', 'PO'],
+                    title='Retraso por ítem: Comprador vs Categoría (tamaño = # proveedores propios)'
+                )
+                st.plotly_chart(fig7, use_container_width=True)
+            else:
+                st.info("No hay suficientes datos de fecha de asignación válidos para generar los gráficos de retraso.")
+
         except Exception as e:
             st.error(f"❌ Error al procesar los archivos: {str(e)}")
             st.info("💡 Asegúrate de que el archivo Excel tenga una hoja llamada 'qryPOs_Temp' y que el CSV tenga las columnas esperadas.")
+elif df_prov is None:
+    st.info("👆 Sube tu base de proveedores (CSV) para comenzar.")
+elif not archivo_requerimientos:
+    st.info("👆 Sube tu archivo de requerimientos (Excel) para comenzar.")
