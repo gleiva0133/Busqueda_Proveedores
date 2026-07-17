@@ -111,15 +111,15 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
 
 def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key):
     """
-    Usa un modelo Qwen (Alibaba Cloud DashScope) con búsqueda web activada
+    Usa el modelo Gemini de Google (con la herramienta de Búsqueda de Google activada)
     para encontrar proveedores adicionales, fuera de la base local del usuario.
     Devuelve una lista de dicts. Si algo falla, devuelve lista vacía y avisa.
     """
     if not api_key:
         return []
 
-    url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
     prompt = f"""Eres un asistente de compras (supply chain) para una empresa minera en Ecuador.
 Busca en internet EMPRESAS PROVEEDORAS reales que vendan o distribuyan productos de la categoría: {categoria}.
@@ -131,17 +131,15 @@ Si no encuentras nada confiable, responde exactamente: []
 Máximo 5 empresas."""
 
     body = {
-        "model": "qwen-plus",
-        "messages": [{"role": "user", "content": prompt}],
-        "enable_search": True,
-        "temperature": 0.3
+        "contents": [{"parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}]
     }
 
     try:
         resp = requests.post(url, headers=headers, json=body, timeout=40)
         resp.raise_for_status()
         data = resp.json()
-        contenido = data["choices"][0]["message"]["content"].strip()
+        contenido = data["candidates"][0]["content"]["parts"][0]["text"].strip()
         # Limpia posibles bloques de código ```json ... ```
         contenido = re.sub(r"^```(json)?|```$", "", contenido, flags=re.MULTILINE).strip()
         proveedores = json.loads(contenido)
@@ -159,21 +157,22 @@ with st.sidebar:
     st.header("🔑 Búsqueda con IA (opcional)")
     with st.expander("¿Qué es esto?"):
         st.markdown(
-            "Además de tu base de proveedores, la app puede pedirle a un modelo "
-            "**Qwen (Alibaba Cloud / DashScope)** que busque en internet empresas "
+            "Además de tu base de proveedores, la app puede pedirle a **Gemini "
+            "(Google AI)**, con búsqueda web activada, que encuentre empresas "
             "proveedoras adicionales para cada categoría, fuera de tu listado.\n\n"
-            "**Para usarlo necesitas una API key:**\n"
-            "1. Crea una cuenta en [Alibaba Cloud Model Studio](https://dashscope.console.aliyun.com/)\n"
-            "2. Genera una API Key (sección 'API-KEY管理' / 'API Key Management')\n"
-            "3. Pégala abajo\n\n"
+            "**Para usarlo necesitas una API key gratuita de Google:**\n"
+            "1. Entra a [Google AI Studio](https://aistudio.google.com/apikey)\n"
+            "2. Inicia sesión con tu cuenta de Google\n"
+            "3. Haz clic en 'Create API key' y cópiala\n"
+            "4. Pégala abajo\n\n"
             "Si no la tienes todavía, no pasa nada: la app funciona igual, solo "
             "usará tu base de datos local."
         )
-    qwen_api_key = st.text_input("API Key de Qwen / DashScope", type="password", placeholder="sk-...")
+    gemini_api_key = st.text_input("API Key de Google (Gemini)", type="password", placeholder="AIza...")
     usar_ia = st.checkbox("Buscar proveedores adicionales con IA", value=False,
-                           disabled=not qwen_api_key,
+                           disabled=not gemini_api_key,
                            help="Se activa solo si ingresas una API key arriba.")
-    if not qwen_api_key:
+    if not gemini_api_key:
         st.caption("Ingresa tu API key para habilitar esta opción.")
 
 # ==========================================
@@ -254,7 +253,7 @@ if df_prov is not None and archivo_requerimientos:
                 st.warning("⚠️ No se encontró una columna de fecha de asignación en el Excel; "
                            "los gráficos de retraso no estarán disponibles.")
 
-            if usar_ia and qwen_api_key:
+            if usar_ia and gemini_api_key:
                 st.write("🌐 Buscando proveedores adicionales con IA por categoría...")
                 barra_ia = st.progress(0)
                 for i, cat in enumerate(categorias_unicas):
@@ -262,7 +261,7 @@ if df_prov is not None and archivo_requerimientos:
                         ejemplos = ", ".join(
                             df_req[df_req['CATEGORIA'] == cat]['Nombre Material'].dropna().astype(str).unique()[:5]
                         )
-                        st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, qwen_api_key)
+                        st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, gemini_api_key)
                     barra_ia.progress((i + 1) / len(categorias_unicas))
 
             resultados = []
