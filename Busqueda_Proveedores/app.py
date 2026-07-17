@@ -110,10 +110,13 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
     return df_proveedores[mask].copy()
 
 
-def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key, intentos=3, debug=False):
+def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key, intentos=3, debug=False, usar_busqueda_web=False):
     """
-    Usa el modelo Gemini de Google (con la herramienta de Búsqueda de Google activada)
-    para encontrar proveedores adicionales, fuera de la base local del usuario.
+    Usa el modelo Gemini de Google para encontrar proveedores adicionales, fuera de la
+    base local del usuario. Por defecto usa solo el conocimiento general del modelo
+    (funciona en el nivel 100% gratuito, sin facturación). Si usar_busqueda_web=True,
+    activa la herramienta de Búsqueda de Google (grounding), que suele requerir
+    facturación habilitada en el proyecto de Google Cloud.
     Devuelve una lista de dicts. Si algo falla, devuelve lista vacía y avisa.
     """
     if not api_key:
@@ -122,9 +125,20 @@ def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key, intentos=3, d
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
+    if usar_busqueda_web:
+        instruccion_fuente = "Usa la búsqueda web para identificar empresas proveedoras reales y actuales."
+    else:
+        instruccion_fuente = (
+            "Basándote en tu conocimiento general (sin búsqueda web en vivo), nombra empresas, "
+            "fabricantes, marcas o distribuidores conocidos que operen en este rubro. Es información "
+            "de referencia que el usuario deberá verificar, no hace falta que confirmes datos exactos "
+            "de contacto en tiempo real."
+        )
+
     prompt = f"""Eres un asistente de compras (supply chain) para una empresa minera en Ecuador.
-Usa la búsqueda web para identificar empresas proveedoras (fabricantes, distribuidores o representantes)
-de productos de la categoría: {categoria}.
+{instruccion_fuente}
+Identifica empresas proveedoras (fabricantes, distribuidores o representantes) de productos de la
+categoría: {categoria}.
 Ejemplos de materiales concretos que se necesitan: {ejemplos_materiales}.
 Prioriza proveedores en Ecuador o la región andina, pero incluye internacionales conocidos si son relevantes
 (por ejemplo marcas o distribuidores reconocidos del rubro industrial/minero).
@@ -136,10 +150,9 @@ con este formato exacto:
 [{{"nombre_empresa": "...", "ciudad_pais": "...", "sitio_web_o_contacto": "...", "descripcion_breve": "..."}}]
 Máximo 5 empresas."""
 
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}]
-    }
+    body = {"contents": [{"parts": [{"text": prompt}]}]}
+    if usar_busqueda_web:
+        body["tools"] = [{"google_search": {}}]
 
     for intento in range(intentos):
         try:
@@ -198,6 +211,13 @@ with st.sidebar:
     usar_ia = st.checkbox("Buscar proveedores adicionales con IA", value=False,
                            disabled=not gemini_api_key,
                            help="Se activa solo si ingresas una API key arriba.")
+    usar_busqueda_web = st.checkbox(
+        "🌐 Usar búsqueda web en vivo (requiere facturación en Google)",
+        value=False, disabled=not gemini_api_key,
+        help="Si lo dejas desactivado, la IA usa su conocimiento general (gratis, sin tarjeta). "
+             "Si lo activas, busca en internet en tiempo real, pero suele necesitar facturación "
+             "habilitada en tu proyecto de Google."
+    )
     debug_ia = st.checkbox("🔍 Modo diagnóstico (mostrar respuesta cruda de la IA)", value=False,
                             disabled=not gemini_api_key)
     if st.button("🔄 Limpiar caché de IA y volver a buscar"):
@@ -292,8 +312,10 @@ if df_prov is not None and archivo_requerimientos:
                         ejemplos = ", ".join(
                             df_req[df_req['CATEGORIA'] == cat]['Nombre Material'].dropna().astype(str).unique()[:5]
                         )
-                        st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, gemini_api_key, debug=debug_ia)
-                        time.sleep(12)  # pausa más larga: el grounding (búsqueda web) tiene cuota más estricta
+                        st.session_state.cache_ia[cat] = buscar_proveedores_ia(
+                            cat, ejemplos, gemini_api_key, debug=debug_ia, usar_busqueda_web=usar_busqueda_web
+                        )
+                        time.sleep(12 if usar_busqueda_web else 2)  # el grounding necesita más pausa; modo gratuito no
                     barra_ia.progress((i + 1) / len(categorias_unicas))
 
             resultados = []
@@ -394,9 +416,10 @@ if df_prov is not None and archivo_requerimientos:
             st.dataframe(df_detalle.head(), use_container_width=True)
 
             if usar_ia:
+                origen_ia = "una búsqueda web en vivo" if usar_busqueda_web else "el conocimiento general del modelo de IA (sin búsqueda en vivo)"
                 st.caption(
-                    "ℹ️ Los proveedores marcados como 'IA' no están verificados por tu empresa: "
-                    "provienen de una búsqueda web automática y deben validarse antes de contactarlos."
+                    f"ℹ️ Los proveedores marcados como 'IA' no están verificados por tu empresa: "
+                    f"provienen de {origen_ia} y deben validarse antes de contactarlos."
                 )
 
             # ==========================================
