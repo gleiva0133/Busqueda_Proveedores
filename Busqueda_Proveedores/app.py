@@ -110,7 +110,7 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
     return df_proveedores[mask].copy()
 
 
-def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key, intentos=3):
+def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key, intentos=3, debug=False):
     """
     Usa el modelo Gemini de Google (con la herramienta de Búsqueda de Google activada)
     para encontrar proveedores adicionales, fuera de la base local del usuario.
@@ -123,12 +123,17 @@ def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key, intentos=3):
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
     prompt = f"""Eres un asistente de compras (supply chain) para una empresa minera en Ecuador.
-Busca en internet EMPRESAS PROVEEDORAS reales que vendan o distribuyan productos de la categoría: {categoria}.
+Usa la búsqueda web para identificar empresas proveedoras (fabricantes, distribuidores o representantes)
+de productos de la categoría: {categoria}.
 Ejemplos de materiales concretos que se necesitan: {ejemplos_materiales}.
-Prioriza proveedores en Ecuador o la región andina, pero incluye internacionales si son relevantes.
-Responde ÚNICAMENTE con un JSON válido (una lista), sin texto adicional ni explicaciones, con este formato exacto:
+Prioriza proveedores en Ecuador o la región andina, pero incluye internacionales conocidos si son relevantes
+(por ejemplo marcas o distribuidores reconocidos del rubro industrial/minero).
+Incluye cualquier empresa razonablemente relacionada aunque no tengas 100% de certeza sobre su información
+de contacto; es mejor dar una sugerencia a validar que ninguna. Solo deja la lista vacía si la categoría
+es tan genérica que no aplica ningún proveedor especializado.
+Responde ÚNICAMENTE con un JSON válido (una lista), sin texto adicional, explicaciones ni bloques de código,
+con este formato exacto:
 [{{"nombre_empresa": "...", "ciudad_pais": "...", "sitio_web_o_contacto": "...", "descripcion_breve": "..."}}]
-Si no encuentras nada confiable, responde exactamente: []
 Máximo 5 empresas."""
 
     body = {
@@ -145,9 +150,15 @@ Máximo 5 empresas."""
             resp.raise_for_status()
             data = resp.json()
             contenido = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            # Limpia posibles bloques de código ```json ... ```
-            contenido = re.sub(r"^```(json)?|```$", "", contenido, flags=re.MULTILINE).strip()
-            proveedores = json.loads(contenido)
+
+            if debug:
+                with st.expander(f"🔍 Debug — respuesta cruda para '{categoria}'"):
+                    st.code(contenido)
+
+            # Extrae el bloque JSON aunque venga rodeado de texto o ```json ... ```
+            match = re.search(r"\[.*\]", contenido, flags=re.DOTALL)
+            contenido_json = match.group(0) if match else contenido
+            proveedores = json.loads(contenido_json)
             return proveedores if isinstance(proveedores, list) else []
         except Exception as e:
             if intento == intentos - 1:
@@ -181,6 +192,8 @@ with st.sidebar:
     usar_ia = st.checkbox("Buscar proveedores adicionales con IA", value=False,
                            disabled=not gemini_api_key,
                            help="Se activa solo si ingresas una API key arriba.")
+    debug_ia = st.checkbox("🔍 Modo diagnóstico (mostrar respuesta cruda de la IA)", value=False,
+                            disabled=not gemini_api_key)
     if not gemini_api_key:
         st.caption("Ingresa tu API key para habilitar esta opción.")
 
@@ -270,7 +283,7 @@ if df_prov is not None and archivo_requerimientos:
                         ejemplos = ", ".join(
                             df_req[df_req['CATEGORIA'] == cat]['Nombre Material'].dropna().astype(str).unique()[:5]
                         )
-                        st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, gemini_api_key)
+                        st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, gemini_api_key, debug=debug_ia)
                         time.sleep(4)  # pausa breve para no exceder el límite gratuito de peticiones/minuto
                     barra_ia.progress((i + 1) / len(categorias_unicas))
 
