@@ -194,6 +194,9 @@ with st.sidebar:
                            help="Se activa solo si ingresas una API key arriba.")
     debug_ia = st.checkbox("🔍 Modo diagnóstico (mostrar respuesta cruda de la IA)", value=False,
                             disabled=not gemini_api_key)
+    if st.button("🔄 Limpiar caché de IA y volver a buscar"):
+        st.session_state.cache_ia = {}
+        st.success("Caché de IA limpiada. Vuelve a procesar tus archivos.")
     if not gemini_api_key:
         st.caption("Ingresa tu API key para habilitar esta opción.")
 
