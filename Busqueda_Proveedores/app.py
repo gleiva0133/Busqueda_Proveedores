@@ -364,6 +364,48 @@ if df_prov is not None and archivo_requerimientos:
 
             df_detalle = pd.DataFrame(resultados)
 
+            # ==========================================
+            # PROPUESTA DE RE-ASIGNACIÓN POR GRUPO (CATEGORÍA)
+            # ==========================================
+            # Por cada categoría, el "dueño" es el comprador que ya tiene más ítems en
+            # ese grupo (y, en caso de empate, mayor retraso promedio). Se le asigna
+            # todo el grupo, buscando balancear la carga total entre compradores.
+            resumen_grupo = (
+                df_detalle.groupby(['Categoría', 'Comprador'])
+                .agg(Num_Items=('Num Ítem', 'count'), Retraso_Prom=('Retraso (días)', 'mean'))
+                .reset_index()
+            )
+            duenos = (
+                resumen_grupo.sort_values(['Categoría', 'Num_Items', 'Retraso_Prom'], ascending=[True, False, False])
+                .drop_duplicates(subset='Categoría', keep='first')
+            )
+            mapa_duenos = dict(zip(duenos['Categoría'], duenos['Comprador']))
+
+            df_reasignacion = df_detalle[['Num Ítem', 'Categoría', 'Material', 'Comprador', 'Retraso (días)']].copy()
+            df_reasignacion = df_reasignacion.rename(columns={'Comprador': 'Comprador Original'})
+            df_reasignacion['Comprador Reasignado'] = df_reasignacion['Categoría'].map(mapa_duenos)
+            df_reasignacion['¿Cambió de comprador?'] = (
+                df_reasignacion['Comprador Original'] != df_reasignacion['Comprador Reasignado']
+            )
+
+            totales_categoria = df_detalle.groupby('Categoría')['Num Ítem'].count().rename('Total Ítems en la Categoría')
+            resumen_categorias = duenos.merge(totales_categoria, on='Categoría').rename(columns={
+                'Comprador': 'Comprador Asignado (dueño del grupo)',
+                'Num_Items': 'Ítems que ya tenía en el grupo',
+                'Retraso_Prom': 'Retraso promedio del dueño en el grupo (días)'
+            })
+            resumen_categorias['Retraso promedio del dueño en el grupo (días)'] = resumen_categorias[
+                'Retraso promedio del dueño en el grupo (días)'].round(1)
+
+            balance_antes = df_detalle['Comprador'].value_counts().rename('Ítems Antes')
+            balance_despues = df_reasignacion['Comprador Reasignado'].value_counts().rename('Ítems Después')
+            balance_carga = (
+                pd.concat([balance_antes, balance_despues], axis=1)
+                .fillna(0).astype(int)
+                .reset_index().rename(columns={'index': 'Comprador'})
+            )
+            balance_carga['Diferencia'] = balance_carga['Ítems Después'] - balance_carga['Ítems Antes']
+
             # Generar Excel en memoria
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -403,6 +445,18 @@ if df_prov is not None and archivo_requerimientos:
                     if not df_ia.empty:
                         df_ia.to_excel(writer, sheet_name='03_PROVEEDORES_IA', index=False)
 
+                # Hoja de propuesta de re-asignación por grupo
+                df_reasignacion.to_excel(writer, sheet_name='04_REASIGNACION', index=False, startrow=1)
+                fila_resumen = len(df_reasignacion) + 4
+                resumen_categorias.to_excel(writer, sheet_name='04_REASIGNACION', index=False, startrow=fila_resumen + 1)
+                fila_balance = fila_resumen + len(resumen_categorias) + 4
+                balance_carga.to_excel(writer, sheet_name='04_REASIGNACION', index=False, startrow=fila_balance + 1)
+
+                ws = writer.sheets['04_REASIGNACION']
+                ws.cell(row=1, column=1, value="DETALLE POR ÍTEM: comprador original vs. reasignado")
+                ws.cell(row=fila_resumen + 1, column=1, value="RESUMEN POR CATEGORÍA: comprador asignado (dueño del grupo)")
+                ws.cell(row=fila_balance + 1, column=1, value="BALANCE DE CARGA: ítems por comprador, antes vs. después")
+
             st.success("✅ ¡Análisis completado con éxito!")
 
             st.download_button(
@@ -421,6 +475,37 @@ if df_prov is not None and archivo_requerimientos:
                     f"ℹ️ Los proveedores marcados como 'IA' no están verificados por tu empresa: "
                     f"provienen de {origen_ia} y deben validarse antes de contactarlos."
                 )
+
+            # ==========================================
+            # 5B. PROPUESTA DE RE-ASIGNACIÓN POR GRUPO
+            # ==========================================
+            st.markdown("---")
+            st.header("🔄 Propuesta de Re-asignación de Ítems")
+            st.markdown(
+                "Por cada **categoría**, se asigna todo el grupo al comprador que ya tenía más ítems "
+                "en ese grupo (y, en caso de empate, mayor retraso promedio), buscando equilibrar la "
+                "carga total entre compradores."
+            )
+
+            st.subheader("Comprador asignado por categoría")
+            st.dataframe(resumen_categorias, use_container_width=True)
+
+            colr1, colr2 = st.columns(2)
+            with colr1:
+                fig_balance = px.bar(
+                    balance_carga.melt(id_vars='Comprador', value_vars=['Ítems Antes', 'Ítems Después'],
+                                        var_name='Momento', value_name='Número de ítems'),
+                    x='Comprador', y='Número de ítems', color='Momento', barmode='group',
+                    title='Carga por Comprador: antes vs. después de re-asignar'
+                )
+                fig_balance.update_layout(xaxis_tickangle=-30)
+                st.plotly_chart(fig_balance, use_container_width=True)
+            with colr2:
+                st.markdown("**Balance de carga**")
+                st.dataframe(balance_carga.sort_values('Ítems Después', ascending=False), use_container_width=True)
+
+            with st.expander("Ver detalle por ítem (comprador original vs. reasignado)"):
+                st.dataframe(df_reasignacion, use_container_width=True)
 
             # ==========================================
             # 6. GRÁFICOS
