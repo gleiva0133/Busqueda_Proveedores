@@ -8,6 +8,7 @@ import os
 import json
 import requests
 import unicodedata
+import time
 import plotly.express as px
 
 # ==========================================
@@ -109,7 +110,7 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
     return df_proveedores[mask].copy()
 
 
-def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key):
+def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key, intentos=3):
     """
     Usa el modelo Gemini de Google (con la herramienta de Búsqueda de Google activada)
     para encontrar proveedores adicionales, fuera de la base local del usuario.
@@ -118,7 +119,7 @@ def buscar_proveedores_ia(categoria, ejemplos_materiales, api_key):
     if not api_key:
         return []
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
     prompt = f"""Eres un asistente de compras (supply chain) para una empresa minera en Ecuador.
@@ -135,18 +136,26 @@ Máximo 5 empresas."""
         "tools": [{"google_search": {}}]
     }
 
-    try:
-        resp = requests.post(url, headers=headers, json=body, timeout=40)
-        resp.raise_for_status()
-        data = resp.json()
-        contenido = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        # Limpia posibles bloques de código ```json ... ```
-        contenido = re.sub(r"^```(json)?|```$", "", contenido, flags=re.MULTILINE).strip()
-        proveedores = json.loads(contenido)
-        return proveedores if isinstance(proveedores, list) else []
-    except Exception as e:
-        st.warning(f"⚠️ No se pudo obtener resultados de IA para la categoría '{categoria}': {e}")
-        return []
+    for intento in range(intentos):
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=40)
+            if resp.status_code == 429:
+                time.sleep(8 * (intento + 1))  # espera progresiva antes de reintentar
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            contenido = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            # Limpia posibles bloques de código ```json ... ```
+            contenido = re.sub(r"^```(json)?|```$", "", contenido, flags=re.MULTILINE).strip()
+            proveedores = json.loads(contenido)
+            return proveedores if isinstance(proveedores, list) else []
+        except Exception as e:
+            if intento == intentos - 1:
+                st.warning(f"⚠️ No se pudo obtener resultados de IA para la categoría '{categoria}': {e}")
+                return []
+            time.sleep(3)
+    st.warning(f"⚠️ Límite de peticiones alcanzado para la categoría '{categoria}' (429). Intenta de nuevo en un momento.")
+    return []
 
 
 # ==========================================
@@ -262,6 +271,7 @@ if df_prov is not None and archivo_requerimientos:
                             df_req[df_req['CATEGORIA'] == cat]['Nombre Material'].dropna().astype(str).unique()[:5]
                         )
                         st.session_state.cache_ia[cat] = buscar_proveedores_ia(cat, ejemplos, gemini_api_key)
+                        time.sleep(4)  # pausa breve para no exceder el límite gratuito de peticiones/minuto
                     barra_ia.progress((i + 1) / len(categorias_unicas))
 
             resultados = []
