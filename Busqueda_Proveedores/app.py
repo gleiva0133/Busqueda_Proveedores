@@ -111,6 +111,15 @@ def encontrar_columna_asignacion(df):
     return None
 
 
+def encontrar_columna_tabla_demanda(df):
+    """Busca la columna 'Tabla Demanda' (o número de tabla de demanda) aunque el nombre varíe"""
+    for col in df.columns:
+        limpio = quitar_acentos(col).lower()
+        if 'demanda' in limpio:
+            return col
+    return None
+
+
 def buscar_proveedores_categoria(categoria, df_proveedores):
     """Busca proveedores según la categoría del material, dentro de la base local"""
     terminos_busqueda = {
@@ -396,11 +405,11 @@ if df_prov is not None and archivo_requerimientos:
 
             # Segunda pasada: términos genéricos (ej. "Baterías", "Shield de protección")
             # no se pueden identificar solo por palabra clave, pero si la mayoría de los
-            # demás ítems de su misma orden de compra (PO) pertenecen a una categoría
+            # demás ítems de su misma [Tabla Demanda] pertenecen a una categoría
             # específica, se asume que son parte del mismo kit/paquete y se reasignan.
-            col_po = 'Num PO' if 'Num PO' in df_req.columns else None
-            if col_po:
-                def _refinar_por_po(grupo):
+            col_tabla_demanda = encontrar_columna_tabla_demanda(df_req)
+            if col_tabla_demanda:
+                def _refinar_por_grupo(grupo):
                     genericos = grupo['CATEGORIA'] == 'FERRETERÍA GENERAL'
                     if genericos.any() and not genericos.all():
                         especificas = grupo.loc[~genericos, 'CATEGORIA']
@@ -409,7 +418,10 @@ if df_prov is not None and archivo_requerimientos:
                             grupo.loc[genericos, 'CATEGORIA'] = moda.iloc[0]
                     return grupo
 
-                df_req = df_req.groupby(col_po, group_keys=False).apply(_refinar_por_po)
+                df_req = df_req.groupby(col_tabla_demanda, group_keys=False).apply(_refinar_por_grupo)
+            else:
+                st.warning("⚠️ No se encontró una columna de 'Tabla Demanda' en el Excel; "
+                           "se omite el refinamiento de categorías genéricas por grupo.")
 
             # Cache de resultados de IA por categoría (para no repetir llamadas)
             if "cache_ia" not in st.session_state:
