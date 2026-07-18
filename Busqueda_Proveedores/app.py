@@ -226,36 +226,112 @@ with st.sidebar:
     if not gemini_api_key:
         st.caption("Ingresa tu API key para habilitar esta opción.")
 
+def construir_url_descarga_directa(url_compartido):
+    """Convierte un link de compartir de OneDrive/SharePoint en uno de descarga directa"""
+    separador = '&' if '?' in url_compartido else '?'
+    return f"{url_compartido}{separador}download=1"
+
+
+def cargar_csv_desde_onedrive(url_compartido):
+    """
+    Descarga el archivo de proveedores desde un link de OneDrive/SharePoint y lo
+    convierte en DataFrame. Requiere que el link tenga permiso de acceso público
+    o 'cualquier persona con el enlace'; si el tenant restringe el acceso a
+    cuentas autenticadas de la organización, la descarga anónima fallará.
+    """
+    url_descarga = construir_url_descarga_directa(url_compartido)
+    resp = requests.get(url_descarga, timeout=30, allow_redirects=True)
+    resp.raise_for_status()
+    contenido = resp.content
+
+    # A veces SharePoint devuelve una página HTML de login en vez del archivo
+    if resp.headers.get('Content-Type', '').startswith('text/html'):
+        raise ValueError(
+            "El enlace devolvió una página web (probablemente de inicio de sesión) en vez del "
+            "archivo. Es posible que el link no tenga permiso de acceso público."
+        )
+
+    try:
+        df = pd.read_csv(io.BytesIO(contenido), encoding='utf-8-sig')
+    except Exception:
+        df = pd.read_excel(io.BytesIO(contenido))
+
+    df.columns = [c.strip() for c in df.columns]
+    df = detectar_columnas(df, ['RAZÓN SOCIAL', 'CONTACTO', 'TELEFONO', 'CORREO'])
+    return df
+
+
+ONEDRIVE_CSV_URL = (
+    "https://ecuacorrienteecuador-my.sharepoint.com/:x:/g/personal/"
+    "gustavo_leiva_ecuacorrienteecuador_onmicrosoft_com/"
+    "IQB4qHPGpaDnSpKKICB3FVYDAXkfVmBL5ymMol8kEHPk5e0?e=twyKIJ"
+)
+
 # ==========================================
 # 4. CARGA Y PERSISTENCIA DEL ARCHIVO DE PROVEEDORES
 # ==========================================
 
 if "df_prov" not in st.session_state:
     st.session_state.df_prov = None
+    st.session_state.fuente_prov = None
     if os.path.exists(PERSIST_PATH):
         try:
             df_guardado = pd.read_csv(PERSIST_PATH, encoding='utf-8-sig')
             df_guardado = detectar_columnas(df_guardado, ['RAZÓN SOCIAL', 'CONTACTO', 'TELEFONO', 'CORREO'])
             st.session_state.df_prov = df_guardado
+            st.session_state.fuente_prov = "guardado localmente"
         except Exception:
             st.session_state.df_prov = None
+
+    # Si no hay nada guardado localmente todavía, intenta cargar el archivo por
+    # defecto desde OneDrive automáticamente.
+    if st.session_state.df_prov is None:
+        try:
+            with st.spinner("🔗 Cargando base de proveedores por defecto desde OneDrive..."):
+                df_onedrive = cargar_csv_desde_onedrive(ONEDRIVE_CSV_URL)
+            st.session_state.df_prov = df_onedrive
+            st.session_state.fuente_prov = "OneDrive (por defecto)"
+            df_onedrive.to_csv(PERSIST_PATH, index=False, encoding='utf-8-sig')
+        except Exception as e:
+            st.session_state.df_prov = None
+            st.session_state.error_onedrive = str(e)
 
 col1, col2 = st.columns(2)
 
 with col1:
     if st.session_state.df_prov is not None:
-        st.success(f"✅ Base de proveedores en memoria ({len(st.session_state.df_prov)} registros).")
-        colb1, colb2 = st.columns(2)
+        st.success(
+            f"✅ Base de proveedores en memoria: {len(st.session_state.df_prov)} registros "
+            f"(fuente: {st.session_state.fuente_prov})."
+        )
+        colb1, colb2, colb3 = st.columns(3)
         with colb1:
-            reemplazar = st.checkbox("Subir un archivo nuevo (reemplazar)")
+            reemplazar = st.checkbox("Subir archivo propio")
         with colb2:
+            if st.button("🔄 Recargar desde OneDrive"):
+                try:
+                    with st.spinner("🔗 Recargando desde OneDrive..."):
+                        df_onedrive = cargar_csv_desde_onedrive(ONEDRIVE_CSV_URL)
+                    st.session_state.df_prov = df_onedrive
+                    st.session_state.fuente_prov = "OneDrive (por defecto)"
+                    df_onedrive.to_csv(PERSIST_PATH, index=False, encoding='utf-8-sig')
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ No se pudo recargar desde OneDrive: {e}")
+        with colb3:
             if st.button("🗑️ Eliminar archivo guardado"):
                 st.session_state.df_prov = None
+                st.session_state.fuente_prov = None
                 if os.path.exists(PERSIST_PATH):
                     os.remove(PERSIST_PATH)
                 st.rerun()
     else:
         reemplazar = True
+        if st.session_state.get("error_onedrive"):
+            st.warning(
+                f"⚠️ No se pudo cargar automáticamente el archivo por defecto desde OneDrive "
+                f"({st.session_state.error_onedrive}). Sube tu base de proveedores manualmente."
+            )
 
     archivo_proveedores = None
     if reemplazar or st.session_state.df_prov is None:
@@ -265,6 +341,7 @@ with col1:
             df_nuevo.columns = [c.strip() for c in df_nuevo.columns]
             df_nuevo = detectar_columnas(df_nuevo, ['RAZÓN SOCIAL', 'CONTACTO', 'TELEFONO', 'CORREO'])
             st.session_state.df_prov = df_nuevo
+            st.session_state.fuente_prov = "archivo propio"
             df_nuevo.to_csv(PERSIST_PATH, index=False, encoding='utf-8-sig')
             st.info("💾 Archivo guardado. No necesitarás volver a subirlo mientras la app siga activa.")
 
