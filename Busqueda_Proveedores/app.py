@@ -58,7 +58,11 @@ def clasificar_requerimiento(row):
         'monitoreo ambiental', 'calidad del aire', 'calidad del agua', 'estacion meteorologica',
         'estación meteorológica', 'pluviometro', 'pluviómetro', 'anemometro', 'anemómetro',
         'medio ambiente', 'medioambiental', 'barometrica', 'barométrica',
-        '气压传感器', '绿藻', '环境监测', '气压计'
+        'sensor de conductividad', 'conductividad', 'sensor de turbiedad', 'turbiedad', 'turbidez',
+        'oxigeno disuelto', 'oxígeno disuelto', 'sensor de clorofila', 'clorofila',
+        'humedad relativa', 'datalogger', 'data logger', 'cr350', 'cr300', 'cr1000',
+        'estacion de monitoreo', 'estación de monitoreo',
+        '气压传感器', '绿藻', '环境监测', '气压计', '电导率', '浊度', '溶解氧', '叶绿素', '数据记录器', '湿度传感器'
     ]):
         return 'EQUIPO Y MONITOREO AMBIENTAL'
     elif any(x in texto for x in [
@@ -389,6 +393,23 @@ if df_prov is not None and archivo_requerimientos:
 
             # Clasificar
             df_req['CATEGORIA'] = df_req.apply(clasificar_requerimiento, axis=1)
+
+            # Segunda pasada: términos genéricos (ej. "Baterías", "Shield de protección")
+            # no se pueden identificar solo por palabra clave, pero si la mayoría de los
+            # demás ítems de su misma orden de compra (PO) pertenecen a una categoría
+            # específica, se asume que son parte del mismo kit/paquete y se reasignan.
+            col_po = 'Num PO' if 'Num PO' in df_req.columns else None
+            if col_po:
+                def _refinar_por_po(grupo):
+                    genericos = grupo['CATEGORIA'] == 'FERRETERÍA GENERAL'
+                    if genericos.any() and not genericos.all():
+                        especificas = grupo.loc[~genericos, 'CATEGORIA']
+                        moda = especificas.mode()
+                        if not moda.empty and (especificas == moda.iloc[0]).mean() >= 0.5:
+                            grupo.loc[genericos, 'CATEGORIA'] = moda.iloc[0]
+                    return grupo
+
+                df_req = df_req.groupby(col_po, group_keys=False).apply(_refinar_por_po)
 
             # Cache de resultados de IA por categoría (para no repetir llamadas)
             if "cache_ia" not in st.session_state:
