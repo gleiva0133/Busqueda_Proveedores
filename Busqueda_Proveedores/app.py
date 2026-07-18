@@ -508,16 +508,25 @@ if df_prov is not None and archivo_requerimientos:
             # específica, se asume que son parte del mismo kit/paquete y se reasignan.
             col_tabla_demanda = encontrar_columna_tabla_demanda(df_req)
             if col_tabla_demanda:
-                def _refinar_por_grupo(grupo):
-                    genericos = grupo['CATEGORIA'] == 'FERRETERÍA GENERAL'
-                    if genericos.any() and not genericos.all():
-                        especificas = grupo.loc[~genericos, 'CATEGORIA']
-                        moda = especificas.mode()
-                        if not moda.empty and (especificas == moda.iloc[0]).mean() >= 0.5:
-                            grupo.loc[genericos, 'CATEGORIA'] = moda.iloc[0]
-                    return grupo
+                llave_grupo = df_req[col_tabla_demanda]
 
-                df_req = df_req.groupby(col_tabla_demanda, group_keys=False).apply(_refinar_por_grupo)
+                def _moda_valida(serie):
+                    especificas = serie[serie != 'FERRETERÍA GENERAL']
+                    if especificas.empty:
+                        return pd.Series({'categoria': None, 'proporcion': 0.0})
+                    moda = especificas.mode()
+                    if moda.empty:
+                        return pd.Series({'categoria': None, 'proporcion': 0.0})
+                    cat = moda.iloc[0]
+                    return pd.Series({'categoria': cat, 'proporcion': (especificas == cat).mean()})
+
+                resumen_modas = df_req.groupby(llave_grupo)['CATEGORIA'].apply(_moda_valida).unstack()
+                mapa_moda = resumen_modas[resumen_modas['proporcion'] >= 0.5]['categoria'].to_dict()
+
+                es_generico = df_req['CATEGORIA'] == 'FERRETERÍA GENERAL'
+                categoria_sugerida = llave_grupo.map(mapa_moda)
+                aplicar = es_generico & categoria_sugerida.notna()
+                df_req.loc[aplicar, 'CATEGORIA'] = categoria_sugerida[aplicar]
             else:
                 st.warning("⚠️ No se encontró una columna de 'Tabla Demanda' en el Excel; "
                            "se omite el refinamiento de categorías genéricas por grupo.")
