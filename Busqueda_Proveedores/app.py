@@ -175,11 +175,20 @@ NOMENCLATURA_TABLA_DEMANDA = {
 
 def extraer_codigo_departamento(valor_tabla_demanda):
     """
-    Extrae el código de departamento desde el valor de [Tabla Demanda] (ej. 'AD-2026-001' -> 'AD').
-    Toma el bloque de letras inicial; si no hay letras, toma el bloque de dígitos inicial
-    (para casos como el código '20').
+    Extrae el código de departamento desde el valor de [Tabla Demanda] buscando, entre los
+    segmentos separados por guiones/espacios/guiones bajos, cuál coincide EXACTAMENTE con un
+    código conocido de NOMENCLATURA_TABLA_DEMANDA.
+    Ej.: 'ECSA-GE-SP-2026-022' -> segmentos ['ECSA','GE','SP','2026','022'] -> 'GE' coincide
+    (Gestión de Equipos), aunque 'ECSA' (el prefijo de la empresa) venga primero.
+    Si ningún segmento coincide exactamente, cae de vuelta al bloque de letras/dígitos inicial.
     """
     texto = str(valor_tabla_demanda).strip().upper()
+    segmentos = re.split(r'[-_\s]+', texto)
+    for segmento in segmentos:
+        if segmento in NOMENCLATURA_TABLA_DEMANDA:
+            return segmento
+
+    # Respaldo: si ningún segmento coincidió exactamente, usa el bloque inicial de letras/dígitos
     match = re.match(r'^([A-ZÑ]+)', texto)
     if match:
         return match.group(1)
