@@ -51,7 +51,7 @@ def clasificar_requerimiento(row):
         return 'RODAMIENTOS Y TRANSMISIÓN'
     elif any(x in texto for x in ['bomba', 'bomb', 'electrobomba', 'hidraulic']):
         return 'BOMBAS Y SISTEMAS HIDRÁULICOS'
-    elif any(x in texto for x in ['valvula', 'válvula', 'valve', 'check', 'regulador']):
+    elif any(x in texto for x in ['valvula', 'válvula', 'valve', 'check', 'regulador de presion', 'regulador de presión', 'regulador de flujo']):
         return 'VÁLVULAS E INSTRUMENTACIÓN'
     elif any(x in texto for x in [
         'sensor de algas', 'algas verdes', 'sensor de presion barometrica', 'sensor de presión barométrica',
@@ -66,11 +66,26 @@ def clasificar_requerimiento(row):
     ]):
         return 'EQUIPO Y MONITOREO AMBIENTAL'
     elif any(x in texto for x in [
+        'computador', 'computadora', 'laptop', 'portatil', 'portátil', 'mouse', 'teclado',
+        'monitor', 'servidor', 'impresora', 'modem', 'módem', 'router', 'ups',
+        'tarjeta de procesamiento', 'tarjeta madre', 'placa madre', 'disco duro', 'memoria ram',
+        'toner', 'tóner', 'cartucho de tinta', 'switch de red', 'cable de red', 'access point',
+        'punto de acceso', 'flash memory', 'pendrive', 'memoria usb', 'cpu', 'ofimatica', 'ofimática',
+        '电脑', '笔记本电脑', '打印机', '路由器', '服务器', '显示器', '硒鼓'
+    ]):
+        return 'SUMINISTROS DE COMPUTACIÓN Y TECNOLOGÍA'
+    elif any(x in texto for x in [
+        'publicitari', 'cartel', 'rotulo', 'rótulo', 'letrero', 'valla publicitaria', 'banner',
+        'pendon', 'pendón', 'gigantografia', 'gigantografía', 'vinil adhesivo', 'lona publicitaria',
+        'diseño grafico', 'diseño gráfico', 'imprenta', 'material pop',
+        '广告', '海报', '招牌', '横幅'
+    ]):
+        return 'DISEÑO Y PUBLICIDAD'
+    elif any(x in texto for x in [
         'papeleria', 'papelería', 'esfero', 'esferografico', 'esferográfico', 'boligrafo', 'bolígrafo',
         'lapiz', 'lápiz', 'pluma estilografica', 'pluma estilográfica', 'mina de recambio',
         'grapa', 'grapadora', 'carpeta', 'cuaderno', 'marcador', 'resaltador', 'clip', 'sobre manila',
-        'flash memory', 'pendrive', 'memoria usb', 'tinta impresora', 'toner', 'tóner',
-        '钢笔', '笔芯', '优盘', '文具', '圆珠笔'
+        '钢笔', '笔芯', '文具', '圆珠笔'
     ]):
         return 'PAPELERÍA Y OFICINA'
     elif any(x in texto for x in ['cable', 'transformador', 'electrico', 'eléctrico', 'ventilador']):
@@ -88,6 +103,15 @@ def clasificar_requerimiento(row):
         '制动', '刹车', '离合器', '悬挂', '发动机', '变速箱', '轮胎', '车灯', '保险杠', '板簧', '减震'
     ]):
         return 'REPUESTOS VEHICULOS Y MAQUINARIA'
+    elif any(x in texto for x in [
+        'madera', 'aserradero', 'mueble', 'muebles', 'menaje de casa', 'menaje de cocina', 'menaje',
+        'cama', 'colchon', 'colchón', 'mesa de noche', 'velador', 'ropero', 'armario',
+        'escritorio', 'silla', 'sillon', 'sillón', 'estanteria', 'estantería', 'archivador',
+        'utensilio de cocina', 'utensilios de cocina', 'vajilla', 'olla', 'ollas', 'sarten', 'sartén',
+        'cubiertos de cocina', 'menaje de oficina',
+        '家具', '木材', '床垫', '厨具'
+    ]):
+        return 'MADERA Y MUEBLES'
     elif any(x in texto for x in ['filtro', 'cartucho', 'manocomando', 'sedal']):
         return 'FILTRACIÓN'
     elif any(x in texto for x in ['epp', 'seguridad', 'guante', 'casco', 'arnes', 'arnés', 'detector']):
@@ -135,6 +159,9 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
         'QUÍMICOS Y LABORATORIO': ['QUIMIC', 'LAB', 'INDURA', 'LINDE'],
         'PAPELERÍA Y OFICINA': ['PAPELER', 'OFICINA', 'SUMINISTRO', 'ESCRITORIO'],
         'EQUIPO Y MONITOREO AMBIENTAL': ['AMBIENTAL', 'MONITOREO', 'SENSOR', 'INSTRUMENT'],
+        'SUMINISTROS DE COMPUTACIÓN Y TECNOLOGÍA': ['COMPUTACION', 'TECNOLOGIA', 'SISTEMAS', 'INFORMATICA', 'COMPUTO'],
+        'DISEÑO Y PUBLICIDAD': ['PUBLICIDAD', 'DISEÑO', 'IMPRENTA', 'GRAFICA', 'ROTULOS'],
+        'MADERA Y MUEBLES': ['MADERA', 'ASERRADERO', 'MUEBLE', 'MENAJE'],
         'FERRETERÍA GENERAL': ['FERRETER', 'HERRAMIENT', 'GENERAL']
     }
 
