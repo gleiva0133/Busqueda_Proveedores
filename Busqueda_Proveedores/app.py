@@ -190,9 +190,15 @@ def extraer_codigo_departamento(valor_tabla_demanda):
     código conocido (o alias) de NOMENCLATURA_TABLA_DEMANDA.
     Ej.: 'ECSA-GE-SP-2026-022' -> segmentos ['ECSA','GE','SP','2026','022'] -> 'GE' coincide
     (Gestión de Equipos). 'ECSA-BEN-SP-2025-007' -> 'BEN' es alias de 'BE' (Beneficio).
+    Caso especial: si el texto es una frase tipo 'Material procurement plan sheet for the
+    ... quarter of ... of Mirador' (sin código corto), se interpreta como Gestión de Equipos.
     Si ningún segmento coincide exactamente, cae de vuelta al bloque de letras/dígitos inicial.
     """
     texto = str(valor_tabla_demanda).strip().upper()
+
+    if 'MATERIAL PROCUREMENT PLAN SHEET' in texto:
+        return 'MA'
+
     segmentos = re.split(r'[-_\s]+', texto)
     for segmento in segmentos:
         if segmento in NOMENCLATURA_TABLA_DEMANDA:
