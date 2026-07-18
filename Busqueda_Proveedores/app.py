@@ -47,6 +47,11 @@ def clasificar_requerimiento(row):
 
     if any(x in texto for x in ['electrodo', 'soldadura', '7018', '6010', 'disco', 'desbaste']):
         return 'SOLDADURA Y ABRASIVOS'
+    elif any(x in texto for x in [
+        'explosivo', 'dinamita', 'detonador', 'fulminante', 'anfo', 'voladura',
+        'cordon detonante', 'cordón detonante', 'mecha lenta', 'emulsion explosiva', 'emulsión explosiva'
+    ]):
+        return 'EXPLOSIVOS Y VOLADURA'
     elif any(x in texto for x in ['rodamiento', 'bearing', 'ruliman', 'cojinete']):
         return 'RODAMIENTOS Y TRANSMISIÓN'
     elif any(x in texto for x in ['bomba', 'bomb', 'electrobomba', 'hidraulic']):
@@ -82,6 +87,11 @@ def clasificar_requerimiento(row):
     ]):
         return 'DISEÑO Y PUBLICIDAD'
     elif any(x in texto for x in [
+        'trofeo', 'medalla', 'placa de reconocimiento', 'recuerdo corporativo', 'premio',
+        'reconocimiento', 'regalo corporativo', 'souvenir'
+    ]):
+        return 'RECONOCIMIENTOS Y ARTÍCULOS PROMOCIONALES'
+    elif any(x in texto for x in [
         'papeleria', 'papelería', 'esfero', 'esferografico', 'esferográfico', 'boligrafo', 'bolígrafo',
         'lapiz', 'lápiz', 'pluma estilografica', 'pluma estilográfica', 'mina de recambio',
         'grapa', 'grapadora', 'carpeta', 'cuaderno', 'marcador', 'resaltador', 'clip', 'sobre manila',
@@ -92,6 +102,16 @@ def clasificar_requerimiento(row):
         return 'MATERIAL ELÉCTRICO'
     elif any(x in texto for x in ['tubo', 'tuberia', 'tubería', 'pipe', 'cobre', 'inoxidable', 'plancha']):
         return 'TUBERÍAS Y METALES'
+    elif any(x in texto for x in [
+        'geomembrana', 'material petreo', 'material pétreo', 'grava', 'arena', 'piedra',
+        'agregado', 'ripio', 'cemento', 'hormigon', 'hormigón', 'cantera'
+    ]):
+        return 'MATERIALES DE CONSTRUCCIÓN'
+    elif any(x in texto for x in [
+        'combustible', 'diesel', 'diésel', 'gasolina', 'lubricante', 'aceite lubricante',
+        'grasa lubricante'
+    ]):
+        return 'COMBUSTIBLES Y LUBRICANTES'
     elif any(x in texto for x in [
         'repuesto', 'part', 'manija', 'puerta', 'asiento', 'ford', 'jac', 'ranger',
         'freno', 'frenos', 'cilindro maestro', 'muelle', 'ballesta', 'ballestas', 'resorte',
@@ -112,14 +132,61 @@ def clasificar_requerimiento(row):
         '家具', '木材', '床垫', '厨具'
     ]):
         return 'MADERA Y MUEBLES'
+    elif any(x in texto for x in [
+        'articulo de aseo', 'articulos de aseo', 'artículo de aseo', 'artículos de aseo', 'limpieza',
+        'detergente', 'jabon', 'jabón', 'desinfectante', 'escoba', 'trapeador', 'papel higienico',
+        'papel higiénico', 'toalla de papel', 'lejia', 'lejía', 'cloro'
+    ]):
+        return 'ASEO Y LIMPIEZA'
     elif any(x in texto for x in ['filtro', 'cartucho', 'manocomando', 'sedal']):
         return 'FILTRACIÓN'
-    elif any(x in texto for x in ['epp', 'seguridad', 'guante', 'casco', 'arnes', 'arnés', 'detector']):
+    elif any(x in texto for x in [
+        'epp', 'seguridad', 'guante', 'casco', 'arnes', 'arnés', 'detector',
+        'dotacion', 'dotación', 'uniforme', 'ropa de trabajo'
+    ]):
         return 'EPP Y SEGURIDAD INDUSTRIAL'
     elif any(x in texto for x in ['quimico', 'químico', 'floculante', 'reactivo', 'laboratorio']):
         return 'QUÍMICOS Y LABORATORIO'
     else:
         return 'FERRETERÍA GENERAL'
+
+
+NOMENCLATURA_TABLA_DEMANDA = {
+    'AD': {'departamento': 'Administración de Campamento', 'categorias_probables': ['ASEO Y LIMPIEZA', 'MADERA Y MUEBLES']},
+    'AP': {'departamento': 'Ampliación de proyectos', 'categorias_probables': ['MATERIALES DE CONSTRUCCIÓN', 'VÁLVULAS E INSTRUMENTACIÓN', 'TUBERÍAS Y METALES']},
+    'BE': {'departamento': 'Beneficio', 'categorias_probables': ['TUBERÍAS Y METALES', 'VÁLVULAS E INSTRUMENTACIÓN', 'SOLDADURA Y ABRASIVOS', 'REPUESTOS VEHICULOS Y MAQUINARIA']},
+    'CL': {'departamento': 'Comercio Y Logística', 'categorias_probables': ['COMBUSTIBLES Y LUBRICANTES']},
+    'EC': {'departamento': 'Gestión de Equipos', 'categorias_probables': ['REPUESTOS VEHICULOS Y MAQUINARIA']},
+    'EX': {'departamento': 'Explotación', 'categorias_probables': ['EXPLOSIVOS Y VOLADURA', 'TUBERÍAS Y METALES', 'FILTRACIÓN']},
+    'GA': {'departamento': 'G. Ambiente', 'categorias_probables': ['QUÍMICOS Y LABORATORIO', 'EQUIPO Y MONITOREO AMBIENTAL']},
+    'GD': {'departamento': 'Gestión de Relaves', 'categorias_probables': ['FERRETERÍA GENERAL']},
+    'GE': {'departamento': 'Gestión de Equipos', 'categorias_probables': ['REPUESTOS VEHICULOS Y MAQUINARIA']},
+    'GI': {'departamento': 'Gestión de Inversión', 'categorias_probables': ['FERRETERÍA GENERAL']},
+    'IG': {'departamento': 'Ing. De Minas', 'categorias_probables': ['MATERIALES DE CONSTRUCCIÓN']},
+    'OP': {'departamento': 'Oficina de Presidencia', 'categorias_probables': ['MADERA Y MUEBLES', 'PAPELERÍA Y OFICINA']},
+    'PT': {'departamento': 'Producción y Tecnología', 'categorias_probables': ['QUÍMICOS Y LABORATORIO']},
+    'RH': {'departamento': 'Recursos Humanos', 'categorias_probables': ['RECONOCIMIENTOS Y ARTÍCULOS PROMOCIONALES']},
+    'SS': {'departamento': 'SSO', 'categorias_probables': ['EPP Y SEGURIDAD INDUSTRIAL']},
+    '20': {'departamento': 'Gestión de Equipos', 'categorias_probables': ['REPUESTOS VEHICULOS Y MAQUINARIA']},
+    'MA': {'departamento': 'Gestión de Equipos', 'categorias_probables': ['REPUESTOS VEHICULOS Y MAQUINARIA']},
+    'IT': {'departamento': 'IT', 'categorias_probables': ['SUMINISTROS DE COMPUTACIÓN Y TECNOLOGÍA']},
+}
+
+
+def extraer_codigo_departamento(valor_tabla_demanda):
+    """
+    Extrae el código de departamento desde el valor de [Tabla Demanda] (ej. 'AD-2026-001' -> 'AD').
+    Toma el bloque de letras inicial; si no hay letras, toma el bloque de dígitos inicial
+    (para casos como el código '20').
+    """
+    texto = str(valor_tabla_demanda).strip().upper()
+    match = re.match(r'^([A-ZÑ]+)', texto)
+    if match:
+        return match.group(1)
+    match = re.match(r'^(\d+)', texto)
+    if match:
+        return match.group(1)
+    return None
 
 
 def quitar_acentos(texto):
@@ -162,6 +229,11 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
         'SUMINISTROS DE COMPUTACIÓN Y TECNOLOGÍA': ['COMPUTACION', 'TECNOLOGIA', 'SISTEMAS', 'INFORMATICA', 'COMPUTO'],
         'DISEÑO Y PUBLICIDAD': ['PUBLICIDAD', 'DISEÑO', 'IMPRENTA', 'GRAFICA', 'ROTULOS'],
         'MADERA Y MUEBLES': ['MADERA', 'ASERRADERO', 'MUEBLE', 'MENAJE'],
+        'ASEO Y LIMPIEZA': ['ASEO', 'LIMPIEZA', 'QUIMICA'],
+        'COMBUSTIBLES Y LUBRICANTES': ['COMBUSTIBLE', 'LUBRICANTE', 'PETROLEO', 'DIESEL'],
+        'EXPLOSIVOS Y VOLADURA': ['EXPLOSIVO', 'VOLADURA', 'DETONADOR', 'EXSA', 'ENAEX'],
+        'MATERIALES DE CONSTRUCCIÓN': ['CONSTRUCCION', 'MATERIALES', 'CANTERA', 'AGREGADOS', 'HORMIGON'],
+        'RECONOCIMIENTOS Y ARTÍCULOS PROMOCIONALES': ['PROMOCIONAL', 'TROFEO', 'REGALOS', 'PUBLICIDAD'],
         'FERRETERÍA GENERAL': ['FERRETER', 'HERRAMIENT', 'GENERAL']
     }
 
@@ -450,6 +522,34 @@ if df_prov is not None and archivo_requerimientos:
                 st.warning("⚠️ No se encontró una columna de 'Tabla Demanda' en el Excel; "
                            "se omite el refinamiento de categorías genéricas por grupo.")
 
+            # Tercera pasada: pista por departamento (según el código en [Tabla Demanda]).
+            # Solo se aplica como ayuda ADICIONAL, no determinante: únicamente a ítems que
+            # sigan sin clasificar (Ferretería General) tras las dos pasadas anteriores, y
+            # solo si el departamento tiene UNA categoría típica clara. Queda registrado en
+            # una columna aparte para que el equipo de compras pueda revisar estos casos.
+            df_req['_codigo_depto'] = None
+            df_req['_departamento'] = ''
+            df_req['_pista_aplicada'] = False
+            if col_tabla_demanda:
+                df_req['_codigo_depto'] = df_req[col_tabla_demanda].apply(extraer_codigo_departamento)
+                df_req['_departamento'] = df_req['_codigo_depto'].map(
+                    lambda c: NOMENCLATURA_TABLA_DEMANDA.get(c, {}).get('departamento', '')
+                )
+
+                def _aplicar_pista_departamento(fila):
+                    if fila['CATEGORIA'] != 'FERRETERÍA GENERAL':
+                        return fila['CATEGORIA'], False
+                    info = NOMENCLATURA_TABLA_DEMANDA.get(fila['_codigo_depto'])
+                    if info and len(info['categorias_probables']) == 1:
+                        candidata = info['categorias_probables'][0]
+                        if candidata != 'FERRETERÍA GENERAL':
+                            return candidata, True
+                    return fila['CATEGORIA'], False
+
+                resultado_pista = df_req.apply(_aplicar_pista_departamento, axis=1, result_type='expand')
+                df_req['CATEGORIA'] = resultado_pista[0]
+                df_req['_pista_aplicada'] = resultado_pista[1]
+
             # Cache de resultados de IA por categoría (para no repetir llamadas)
             if "cache_ia" not in st.session_state:
                 st.session_state.cache_ia = {}
@@ -517,6 +617,9 @@ if df_prov is not None and archivo_requerimientos:
                     'Fecha Entrega': row.get('F Prevista de entrega', ''),
                     'Comprador': row.get('Comprador', ''),
                     'PO': row.get('Num PO', ''),
+                    'Tabla Demanda': row.get(col_tabla_demanda, '') if col_tabla_demanda else '',
+                    'Departamento (Tabla Demanda)': row.get('_departamento', ''),
+                    'Categoría asignada por pista de Departamento': bool(row.get('_pista_aplicada', False)),
                     'F Asignación': row.get('_fecha_asignacion', pd.NaT),
                     'Retraso (días)': row.get('_retraso_dias', np.nan),
                     'Num Proveedores (Base propia)': len(proveedores_info),
