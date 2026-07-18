@@ -179,6 +179,7 @@ ALIASES_CODIGO_DEPARTAMENTO = {
     'ADC': 'AD',    # Administración de Campamento
     'GAMB': 'GA',   # G. Ambiente
     'SSO': 'SS',    # SSO
+    'GDR': 'GD',    # Gestión de Relaves
 }
 
 
