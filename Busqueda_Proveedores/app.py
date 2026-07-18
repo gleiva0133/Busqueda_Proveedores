@@ -433,15 +433,15 @@ if df_prov is not None and archivo_requerimientos:
                 proveedores_info = []
                 for _, prov in prov_categoria.iterrows():
                     info = {
-                        'RUC': str(prov.get('RUC', '')),
-                        'Razón Social': prov.get('RAZÓN SOCIAL', ''),
-                        'Nombre Comercial': prov.get('NOMBRE COMERCIAL', ''),
-                        'Contacto': prov.get('CONTACTO', ''),
-                        'Teléfono': str(prov.get('TELEFONO', '')),
-                        'Celular': str(prov.get('CELULAR', '')),
-                        'Email': prov.get('CORREO', ''),
-                        'Ciudad': prov.get('Ciudad OK', prov.get('REGION', '')),
-                        'Región': prov.get('REGION', '')
+                        'RUC': str(prov.get('RUC', '') if pd.notna(prov.get('RUC', '')) else ''),
+                        'Razón Social': str(prov.get('RAZÓN SOCIAL', '') if pd.notna(prov.get('RAZÓN SOCIAL', '')) else ''),
+                        'Nombre Comercial': str(prov.get('NOMBRE COMERCIAL', '') if pd.notna(prov.get('NOMBRE COMERCIAL', '')) else ''),
+                        'Contacto': str(prov.get('CONTACTO', '') if pd.notna(prov.get('CONTACTO', '')) else ''),
+                        'Teléfono': str(prov.get('TELEFONO', '') if pd.notna(prov.get('TELEFONO', '')) else ''),
+                        'Celular': str(prov.get('CELULAR', '') if pd.notna(prov.get('CELULAR', '')) else ''),
+                        'Email': str(prov.get('CORREO', '') if pd.notna(prov.get('CORREO', '')) else ''),
+                        'Ciudad': str(prov.get('Ciudad OK', prov.get('REGION', '')) if pd.notna(prov.get('Ciudad OK', prov.get('REGION', ''))) else ''),
+                        'Región': str(prov.get('REGION', '') if pd.notna(prov.get('REGION', '')) else '')
                     }
                     proveedores_info.append(info)
 
@@ -460,9 +460,9 @@ if df_prov is not None and archivo_requerimientos:
                     'F Asignación': row.get('_fecha_asignacion', pd.NaT),
                     'Retraso (días)': row.get('_retraso_dias', np.nan),
                     'Num Proveedores (Base propia)': len(proveedores_info),
-                    'Proveedores (Base propia)': ", ".join([p['Nombre Comercial'] for p in proveedores_info[:3]]),
+                    'Proveedores (Base propia)': ", ".join([p['Nombre Comercial'] or '(sin nombre)' for p in proveedores_info[:3]]),
                     'Num Proveedores (IA)': len(proveedores_ia_cat),
-                    'Proveedores (IA)': ", ".join([p.get('nombre_empresa', '') for p in proveedores_ia_cat[:3]])
+                    'Proveedores (IA)': ", ".join([str(p.get('nombre_empresa') or '') for p in proveedores_ia_cat[:3]])
                 })
                 barra_progreso.progress((idx + 1) / len(df_req))
 
