@@ -172,14 +172,23 @@ NOMENCLATURA_TABLA_DEMANDA = {
     'IT': {'departamento': 'IT', 'categorias_probables': ['SUMINISTROS DE COMPUTACIÓN Y TECNOLOGÍA']},
 }
 
+# Alias para abreviaturas largas observadas en los datos reales, que apuntan al
+# mismo código canónico de 2 letras de NOMENCLATURA_TABLA_DEMANDA.
+ALIASES_CODIGO_DEPARTAMENTO = {
+    'BEN': 'BE',    # Beneficio
+    'ADC': 'AD',    # Administración de Campamento
+    'GAMB': 'GA',   # G. Ambiente
+    'SSO': 'SS',    # SSO
+}
+
 
 def extraer_codigo_departamento(valor_tabla_demanda):
     """
     Extrae el código de departamento desde el valor de [Tabla Demanda] buscando, entre los
     segmentos separados por guiones/espacios/guiones bajos, cuál coincide EXACTAMENTE con un
-    código conocido de NOMENCLATURA_TABLA_DEMANDA.
+    código conocido (o alias) de NOMENCLATURA_TABLA_DEMANDA.
     Ej.: 'ECSA-GE-SP-2026-022' -> segmentos ['ECSA','GE','SP','2026','022'] -> 'GE' coincide
-    (Gestión de Equipos), aunque 'ECSA' (el prefijo de la empresa) venga primero.
+    (Gestión de Equipos). 'ECSA-BEN-SP-2025-007' -> 'BEN' es alias de 'BE' (Beneficio).
     Si ningún segmento coincide exactamente, cae de vuelta al bloque de letras/dígitos inicial.
     """
     texto = str(valor_tabla_demanda).strip().upper()
@@ -187,6 +196,8 @@ def extraer_codigo_departamento(valor_tabla_demanda):
     for segmento in segmentos:
         if segmento in NOMENCLATURA_TABLA_DEMANDA:
             return segmento
+        if segmento in ALIASES_CODIGO_DEPARTAMENTO:
+            return ALIASES_CODIGO_DEPARTAMENTO[segmento]
 
     # Respaldo: si ningún segmento coincidió exactamente, usa el bloque inicial de letras/dígitos
     match = re.match(r'^([A-ZÑ]+)', texto)
