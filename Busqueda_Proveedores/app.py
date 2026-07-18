@@ -39,7 +39,7 @@ def detectar_columnas(df, columnas_busqueda):
 
 
 def clasificar_requerimiento(row):
-    """Clasifica el requerimiento según descripción y especificaciones"""
+    """Clasifica el requerimiento según descripción y especificaciones (español + chino)"""
     texto = str(row.get('Nombre Material', '')).lower() + ' ' + \
             str(row.get('Especif1', '')).lower() + ' ' + \
             str(row.get('Especif2', '')).lower() + ' ' + \
@@ -53,17 +53,42 @@ def clasificar_requerimiento(row):
         return 'BOMBAS Y SISTEMAS HIDRÁULICOS'
     elif any(x in texto for x in ['valvula', 'válvula', 'valve', 'check', 'regulador']):
         return 'VÁLVULAS E INSTRUMENTACIÓN'
-    elif any(x in texto for x in ['cable', 'transformador', 'electrico', 'motor', 'ventilador']):
+    elif any(x in texto for x in [
+        'sensor de algas', 'algas verdes', 'sensor de presion barometrica', 'sensor de presión barométrica',
+        'monitoreo ambiental', 'calidad del aire', 'calidad del agua', 'estacion meteorologica',
+        'estación meteorológica', 'pluviometro', 'pluviómetro', 'anemometro', 'anemómetro',
+        'medio ambiente', 'medioambiental', 'barometrica', 'barométrica',
+        '气压传感器', '绿藻', '环境监测', '气压计'
+    ]):
+        return 'EQUIPO Y MONITOREO AMBIENTAL'
+    elif any(x in texto for x in [
+        'papeleria', 'papelería', 'esfero', 'esferografico', 'esferográfico', 'boligrafo', 'bolígrafo',
+        'lapiz', 'lápiz', 'pluma estilografica', 'pluma estilográfica', 'mina de recambio',
+        'grapa', 'grapadora', 'carpeta', 'cuaderno', 'marcador', 'resaltador', 'clip', 'sobre manila',
+        'flash memory', 'pendrive', 'memoria usb', 'tinta impresora', 'toner', 'tóner',
+        '钢笔', '笔芯', '优盘', '文具', '圆珠笔'
+    ]):
+        return 'PAPELERÍA Y OFICINA'
+    elif any(x in texto for x in ['cable', 'transformador', 'electrico', 'eléctrico', 'ventilador']):
         return 'MATERIAL ELÉCTRICO'
-    elif any(x in texto for x in ['tubo', 'tuberia', 'pipe', 'cobre', 'inoxidable', 'plancha']):
+    elif any(x in texto for x in ['tubo', 'tuberia', 'tubería', 'pipe', 'cobre', 'inoxidable', 'plancha']):
         return 'TUBERÍAS Y METALES'
-    elif any(x in texto for x in ['repuesto', 'part', 'manija', 'puerta', 'asiento', 'ford', 'jac', 'ranger']):
+    elif any(x in texto for x in [
+        'repuesto', 'part', 'manija', 'puerta', 'asiento', 'ford', 'jac', 'ranger',
+        'freno', 'frenos', 'cilindro maestro', 'muelle', 'ballesta', 'ballestas', 'resorte',
+        'amortiguador', 'suspension', 'suspensión', 'embrague', 'radiador', 'alternador',
+        'motor de arranque', 'bujia', 'bujía', 'correa', 'faro', 'faros', 'espejo retrovisor',
+        'parachoques', 'guardafango', 'guardachoque', 'llanta', 'neumatico', 'neumático', 'rin',
+        'chasis', 'carroceria', 'carrocería', 'camion', 'camión', 'camioneta', 'vehiculo', 'vehículo',
+        'parabrisas',
+        '制动', '刹车', '离合器', '悬挂', '发动机', '变速箱', '轮胎', '车灯', '保险杠', '板簧', '减震'
+    ]):
         return 'REPUESTOS VEHICULOS Y MAQUINARIA'
     elif any(x in texto for x in ['filtro', 'cartucho', 'manocomando', 'sedal']):
         return 'FILTRACIÓN'
-    elif any(x in texto for x in ['epp', 'seguridad', 'guante', 'casco', 'arnes', 'detector']):
+    elif any(x in texto for x in ['epp', 'seguridad', 'guante', 'casco', 'arnes', 'arnés', 'detector']):
         return 'EPP Y SEGURIDAD INDUSTRIAL'
-    elif any(x in texto for x in ['quimico', 'floculante', 'reactivo', 'laboratorio']):
+    elif any(x in texto for x in ['quimico', 'químico', 'floculante', 'reactivo', 'laboratorio']):
         return 'QUÍMICOS Y LABORATORIO'
     else:
         return 'FERRETERÍA GENERAL'
@@ -95,6 +120,8 @@ def buscar_proveedores_categoria(categoria, df_proveedores):
         'FILTRACIÓN': ['FILTRO', 'CARTUCHO', 'FLUIDMAQ'],
         'EPP Y SEGURIDAD INDUSTRIAL': ['EPP', 'SEGURIDAD', 'GROUP4', 'SAFETY'],
         'QUÍMICOS Y LABORATORIO': ['QUIMIC', 'LAB', 'INDURA', 'LINDE'],
+        'PAPELERÍA Y OFICINA': ['PAPELER', 'OFICINA', 'SUMINISTRO', 'ESCRITORIO'],
+        'EQUIPO Y MONITOREO AMBIENTAL': ['AMBIENTAL', 'MONITOREO', 'SENSOR', 'INSTRUMENT'],
         'FERRETERÍA GENERAL': ['FERRETER', 'HERRAMIENT', 'GENERAL']
     }
 
@@ -444,19 +471,52 @@ if df_prov is not None and archivo_requerimientos:
             # ==========================================
             # PROPUESTA DE RE-ASIGNACIÓN POR GRUPO (CATEGORÍA)
             # ==========================================
-            # Por cada categoría, el "dueño" es el comprador que ya tiene más ítems en
-            # ese grupo (y, en caso de empate, mayor retraso promedio). Se le asigna
-            # todo el grupo, buscando balancear la carga total entre compradores.
+            # Algoritmo de balanceo: se procesan las categorías de mayor a menor tamaño
+            # y cada una se asigna al comprador que, en ese momento, tenga MENOS ítems
+            # acumulados en total. En caso de empate en la carga, se prefiere al
+            # comprador que ya tenía más ítems en esa categoría (y, si persiste el
+            # empate, mayor retraso promedio). Esto evita que una sola persona termine
+            # acumulando varias categorías grandes.
             resumen_grupo = (
                 df_detalle.groupby(['Categoría', 'Comprador'])
                 .agg(Num_Items=('Num Ítem', 'count'), Retraso_Prom=('Retraso (días)', 'mean'))
                 .reset_index()
             )
-            duenos = (
-                resumen_grupo.sort_values(['Categoría', 'Num_Items', 'Retraso_Prom'], ascending=[True, False, False])
-                .drop_duplicates(subset='Categoría', keep='first')
-            )
-            mapa_duenos = dict(zip(duenos['Categoría'], duenos['Comprador']))
+            totales_categoria = df_detalle.groupby('Categoría')['Num Ítem'].count().rename('Total Ítems en la Categoría')
+            categorias_por_tamano = totales_categoria.sort_values(ascending=False).index.tolist()
+            universo_compradores = sorted(df_detalle['Comprador'].dropna().unique().tolist())
+
+            carga_actual = {c: 0 for c in universo_compradores}
+            mapa_duenos = {}
+            filas_resumen = []
+
+            for cat in categorias_por_tamano:
+                tam_grupo = int(totales_categoria[cat])
+                candidatos_categoria = (
+                    resumen_grupo[resumen_grupo['Categoría'] == cat]
+                    .set_index('Comprador')[['Num_Items', 'Retraso_Prom']]
+                )
+                # Ordena TODOS los compradores por: menor carga actual primero;
+                # en empate, más ítems previos en esta categoría; luego mayor retraso.
+                orden = sorted(
+                    universo_compradores,
+                    key=lambda c: (
+                        carga_actual[c],
+                        -candidatos_categoria['Num_Items'].get(c, 0),
+                        -(candidatos_categoria['Retraso_Prom'].get(c, -1) or -1)
+                    )
+                )
+                elegido = orden[0]
+                mapa_duenos[cat] = elegido
+                carga_actual[elegido] += tam_grupo
+
+                filas_resumen.append({
+                    'Categoría': cat,
+                    'Comprador Asignado (dueño del grupo)': elegido,
+                    'Ítems que ya tenía en el grupo': int(candidatos_categoria['Num_Items'].get(elegido, 0)),
+                    'Retraso promedio del dueño en el grupo (días)': candidatos_categoria['Retraso_Prom'].get(elegido, np.nan),
+                    'Total Ítems en la Categoría': tam_grupo
+                })
 
             df_reasignacion = df_detalle[['Num Ítem', 'Categoría', 'Material', 'Comprador', 'Retraso (días)']].copy()
             df_reasignacion = df_reasignacion.rename(columns={'Comprador': 'Comprador Original'})
@@ -465,12 +525,7 @@ if df_prov is not None and archivo_requerimientos:
                 df_reasignacion['Comprador Original'] != df_reasignacion['Comprador Reasignado']
             )
 
-            totales_categoria = df_detalle.groupby('Categoría')['Num Ítem'].count().rename('Total Ítems en la Categoría')
-            resumen_categorias = duenos.merge(totales_categoria, on='Categoría').rename(columns={
-                'Comprador': 'Comprador Asignado (dueño del grupo)',
-                'Num_Items': 'Ítems que ya tenía en el grupo',
-                'Retraso_Prom': 'Retraso promedio del dueño en el grupo (días)'
-            })
+            resumen_categorias = pd.DataFrame(filas_resumen)
             resumen_categorias['Retraso promedio del dueño en el grupo (días)'] = resumen_categorias[
                 'Retraso promedio del dueño en el grupo (días)'].round(1)
 
