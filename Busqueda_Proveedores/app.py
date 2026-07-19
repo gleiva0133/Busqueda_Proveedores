@@ -1148,6 +1148,31 @@ if archivo_dashboard:
 
         st.caption(f"Mostrando {len(df_f):,} de {len(df_po):,} ítems según los filtros seleccionados.")
 
+        # --- Bandera de cancelación: detecta 'CANCELA', 'CANCELADO', 'Cancelando',
+        # 'CANCELAOD' (con error de tipeo), etc., tanto en Estado_TD como en Num PO ---
+        def _contiene_cancela(*valores):
+            return any('CANCEL' in str(v).strip().upper() for v in valores if pd.notna(v))
+
+        cols_estado_cancel = [c for c in ['Estado_TD', 'Num PO'] if c in df_f.columns]
+        if cols_estado_cancel:
+            df_f['Es Cancelado'] = df_f[cols_estado_cancel].apply(
+                lambda fila: _contiene_cancela(*fila.values), axis=1
+            )
+        else:
+            df_f['Es Cancelado'] = False
+
+        # --- Monto oficial: solo POs YA EMITIDAS (con F Firma PO) y NO canceladas ---
+        if 'F Firma PO' in df_f.columns:
+            df_oficial = df_f[df_f['F Firma PO'].notna() & ~df_f['Es Cancelado']].copy()
+        else:
+            df_oficial = df_f[~df_f['Es Cancelado']].copy()
+
+        st.caption(
+            f"💵 Montos oficiales calculados sobre {len(df_oficial):,} ítems con PO emitida y no cancelada "
+            f"(se excluyeron {df_f['Es Cancelado'].sum():,} ítems cancelados y "
+            f"{(df_f['F Firma PO'].isna() & ~df_f['Es Cancelado']).sum():,} sin PO emitida aún, del total filtrado)."
+        )
+
         if df_f.empty:
             st.warning("No hay datos para los filtros seleccionados.")
         else:
@@ -1155,7 +1180,7 @@ if archivo_dashboard:
             st.markdown("### 📌 Resumen General")
             total_items = len(df_f)
             total_pos = df_f['Num PO'].nunique() if 'Num PO' in df_f.columns else np.nan
-            gasto_total = df_f['US_Subtotal_I_1'].sum() if 'US_Subtotal_I_1' in df_f.columns else np.nan
+            gasto_total = df_oficial['US_Subtotal_I_1'].sum() if 'US_Subtotal_I_1' in df_oficial.columns else np.nan
             otd = (df_f['Estado Pos'] == 'Ok').mean() * 100 if 'Estado Pos' in df_f.columns else np.nan
             dias_emision_prom = df_f['Días Emisión PO'].mean() if 'Días Emisión PO' in df_f.columns else np.nan
             retraso_prom_activo = (
@@ -1166,7 +1191,7 @@ if archivo_dashboard:
                 (df_f['Solo Source (norm)'] == 'SI').mean() * 100
                 if 'Solo Source (norm)' in df_f.columns and df_f['Solo Source (norm)'].notna().any() else np.nan
             )
-            ahorro_total = df_f['Ahorro Potencial Total'].sum() if 'Ahorro Potencial Total' in df_f.columns else np.nan
+            ahorro_total = df_oficial['Ahorro Potencial Total'].sum() if 'Ahorro Potencial Total' in df_oficial.columns else np.nan
 
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Total ítems", f"{total_items:,}")
@@ -1232,12 +1257,12 @@ if archivo_dashboard:
                 fig.update_layout(xaxis_tickangle=-30)
                 st.plotly_chart(fig, use_container_width=True)
             with col4:
-                if 'US_Subtotal_I_1' in df_f.columns:
-                    gasto_comprador = df_f.groupby('Comprador')['US_Subtotal_I_1'].sum().sort_values(ascending=False).reset_index()
+                if 'US_Subtotal_I_1' in df_oficial.columns:
+                    gasto_comprador = df_oficial.groupby('Comprador')['US_Subtotal_I_1'].sum().sort_values(ascending=False).reset_index()
                     gasto_comprador.columns = ['Comprador', 'Gasto Total (USD)']
                     fig = px.bar(
                         gasto_comprador, x='Comprador', y='Gasto Total (USD)',
-                        title='Gasto total gestionado por Comprador (USD, c/IVA)'
+                        title='Gasto oficial gestionado por Comprador (USD, c/IVA — solo PO emitidas, no canceladas)'
                     )
                     fig.update_layout(xaxis_tickangle=-30)
                     st.plotly_chart(fig, use_container_width=True)
@@ -1299,34 +1324,34 @@ if archivo_dashboard:
 
             col9, col10 = st.columns(2)
             with col9:
-                if 'US_Subtotal_I_1' in df_f.columns and '_Año' in df_f.columns and '_Mes' in df_f.columns:
-                    df_temp = df_f.dropna(subset=['_Año', '_Mes']).copy()
+                if 'US_Subtotal_I_1' in df_oficial.columns and '_Año' in df_oficial.columns and '_Mes' in df_oficial.columns:
+                    df_temp = df_oficial.dropna(subset=['_Año', '_Mes']).copy()
                     df_temp['Periodo'] = df_temp['_Año'].astype(int).astype(str) + '-' + df_temp['_Mes'].astype(int).astype(str).str.zfill(2)
                     gasto_periodo = df_temp.groupby('Periodo')['US_Subtotal_I_1'].sum().reset_index().sort_values('Periodo')
                     fig = px.line(
                         gasto_periodo, x='Periodo', y='US_Subtotal_I_1', markers=True,
-                        title='Gasto total por período (USD, c/IVA)'
+                        title='Gasto oficial por período (USD, c/IVA — solo PO emitidas, no canceladas)'
                     )
                     fig.update_layout(xaxis_tickangle=-45)
                     st.plotly_chart(fig, use_container_width=True)
             with col10:
-                if 'IVA Estimado' in df_f.columns:
-                    iva_total = df_f['IVA Estimado'].sum()
-                    iva_pct = (df_f['IVA Estimado'].sum() / df_f['Subtotal Ítem'].sum() * 100) if df_f['Subtotal Ítem'].sum() else np.nan
-                    st.metric("IVA total estimado", f"${iva_total:,.0f}")
+                if 'IVA Estimado' in df_oficial.columns:
+                    iva_total = df_oficial['IVA Estimado'].sum()
+                    iva_pct = (df_oficial['IVA Estimado'].sum() / df_oficial['Subtotal Ítem'].sum() * 100) if df_oficial['Subtotal Ítem'].sum() else np.nan
+                    st.metric("IVA total estimado (oficial)", f"${iva_total:,.0f}")
                     st.metric("Impacto IVA (% sobre subtotal)", f"{iva_pct:.1f}%" if pd.notna(iva_pct) else "N/D")
-                    fig = px.box(df_f, y='IVA Estimado', title='Distribución del IVA estimado por ítem')
+                    fig = px.box(df_oficial, y='IVA Estimado', title='Distribución del IVA estimado por ítem (oficial)')
                     st.plotly_chart(fig, use_container_width=True)
 
-            if 'Categoría' in df_f.columns and 'US_Subtotal_I_1' in df_f.columns:
-                st.markdown("#### Análisis ABC (Pareto) por Categoría")
-                gasto_cat = df_f.groupby('Categoría')['US_Subtotal_I_1'].sum().sort_values(ascending=False).reset_index()
+            if 'Categoría' in df_oficial.columns and 'US_Subtotal_I_1' in df_oficial.columns:
+                st.markdown("#### Análisis ABC (Pareto) por Categoría — gasto oficial")
+                gasto_cat = df_oficial.groupby('Categoría')['US_Subtotal_I_1'].sum().sort_values(ascending=False).reset_index()
                 gasto_cat['% Acumulado'] = gasto_cat['US_Subtotal_I_1'].cumsum() / gasto_cat['US_Subtotal_I_1'].sum() * 100
                 gasto_cat['Clase ABC'] = pd.cut(
                     gasto_cat['% Acumulado'], bins=[0, 80, 95, 100], labels=['A', 'B', 'C'], include_lowest=True
                 )
                 fig = px.bar(gasto_cat, x='Categoría', y='US_Subtotal_I_1', color='Clase ABC',
-                             title='Gasto por Categoría (clasificación ABC)')
+                             title='Gasto oficial por Categoría (clasificación ABC)')
                 fig.add_scatter(x=gasto_cat['Categoría'], y=gasto_cat['% Acumulado'], mode='lines+markers',
                                  name='% Acumulado', yaxis='y2')
                 fig.update_layout(
@@ -1352,24 +1377,30 @@ if archivo_dashboard:
                 else:
                     st.info("No hay datos suficientes de 'Solo Source' en el filtro actual.")
             with col12:
-                if all(c in df_f.columns for c in ['Proveedor', 'US_Subtotal_I_1', 'T Retraso']):
-                    matriz = df_f.groupby('Proveedor').agg(
-                        Gasto_Total=('US_Subtotal_I_1', 'sum'),
+                if all(c in df_f.columns for c in ['Proveedor', 'T Retraso']) and 'US_Subtotal_I_1' in df_oficial.columns:
+                    matriz_conteo = df_f.groupby('Proveedor').agg(
                         Retraso_Prom=('T Retraso', 'mean'),
                         Num_Items=('Proveedor', 'count')
-                    ).query('Num_Items >= 2').reset_index()
+                    ).reset_index()
+                    gasto_oficial_prov = (
+                        df_oficial.groupby('Proveedor')['US_Subtotal_I_1'].sum()
+                        .rename('Gasto_Total').reset_index()
+                    )
+                    matriz = matriz_conteo.merge(gasto_oficial_prov, on='Proveedor', how='left')
+                    matriz['Gasto_Total'] = matriz['Gasto_Total'].fillna(0)
+                    matriz = matriz.query('Num_Items >= 2')
                     if not matriz.empty:
                         fig = px.scatter(
                             matriz, x='Retraso_Prom', y='Gasto_Total', size='Num_Items', hover_name='Proveedor',
-                            title='Matriz de riesgo: Gasto vs Retraso promedio por proveedor',
-                            labels={'Retraso_Prom': 'Retraso promedio (días)', 'Gasto_Total': 'Gasto total (USD)'}
+                            title='Matriz de riesgo: Gasto oficial vs Retraso promedio por proveedor',
+                            labels={'Retraso_Prom': 'Retraso promedio (días)', 'Gasto_Total': 'Gasto oficial (USD)'}
                         )
                         st.plotly_chart(fig, use_container_width=True)
 
-            if 'Ahorro Potencial Total' in df_f.columns:
-                st.markdown("#### Oportunidades de ahorro por negociación (Precio U vs. mejores alternativas)")
+            if 'Ahorro Potencial Total' in df_oficial.columns:
+                st.markdown("#### Oportunidades de ahorro por negociación (Precio U vs. mejores alternativas) — gasto oficial")
                 ahorro_prov = (
-                    df_f[df_f['Ahorro Potencial Total'] > 0]
+                    df_oficial[df_oficial['Ahorro Potencial Total'] > 0]
                     .groupby('Proveedor')['Ahorro Potencial Total']
                     .sum().sort_values(ascending=False).head(15).reset_index()
                 )
