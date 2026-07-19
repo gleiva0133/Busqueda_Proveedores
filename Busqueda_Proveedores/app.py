@@ -933,3 +933,488 @@ elif df_prov is None:
     st.info("👆 Sube tu base de proveedores (CSV) para comenzar.")
 elif not archivo_requerimientos:
     st.info("👆 Sube tu archivo de requerimientos (Excel) para comenzar.")
+
+
+# ==========================================================================
+# 6. DASHBOARD DE PERFORMANCE DE COMPRAS (PO)
+# ==========================================================================
+st.markdown("---")
+st.title("📊 Dashboard de Performance de Compras")
+st.markdown(
+    "Sube el archivo de estado de órdenes de compra (ej. `dbo_vw_LM_PO_Estado.xlsx`) para ver "
+    "KPIs de eficiencia del proceso, cumplimiento de proveedores, costos y riesgo."
+)
+
+
+def clasificar_estado_td(valor):
+    """Interpreta el campo Estado_TD: número = días de retraso, código = PO cerrada, texto = cancelado/suspendido"""
+    texto = str(valor).strip().upper()
+    if texto in ('NAN', 'NONE', ''):
+        return 'Sin dato'
+    if 'CANCEL' in texto:
+        return 'Cancelado'
+    if 'SUSPEND' in texto or 'SUPEND' in texto:
+        return 'Suspendido'
+    try:
+        num = float(texto)
+        if num > 0:
+            return 'Retrasado'
+        elif num == 0:
+            return 'A tiempo'
+        else:
+            return 'Adelantado'
+    except ValueError:
+        return 'Cerrado (PO completada)'
+
+
+def bucket_severidad_retraso(dias):
+    """Clasifica el retraso en buckets de severidad"""
+    if pd.isna(dias) or dias <= 0:
+        return 'Sin retraso'
+    elif dias <= 30:
+        return 'Leve (1-30 días)'
+    elif dias <= 90:
+        return 'Moderado (31-90 días)'
+    elif dias <= 180:
+        return 'Crítico (91-180 días)'
+    else:
+        return 'Severo (>180 días)'
+
+
+archivo_dashboard = st.file_uploader(
+    "📂 Archivo de estado de órdenes de compra (Excel)", type=['xlsx', 'xls'], key="uploader_dashboard"
+)
+
+if archivo_dashboard:
+    try:
+        with st.spinner("⚙️ Cargando y preparando datos del dashboard..."):
+            df_po = pd.read_excel(archivo_dashboard)
+            df_po.columns = df_po.columns.str.strip()
+
+            columnas_esperadas = [
+                'Estado PO', 'Estado Pos', 'T Retraso', 'Estado_TD', 'N_Año', 'N_Mes',
+                'F Asignacion Tabla', 'F Firma PO', 'Comprador', 'Num PO', 'Precio U',
+                'Subtotal Ítem', 'Proveedor', 'Solo Source', 'Precio U2', 'Precio U3',
+                'US_Subtotal_I_1', 'Cant_PO', 'Nombre Material'
+            ]
+            faltantes = [c for c in columnas_esperadas if c not in df_po.columns]
+            if faltantes:
+                st.warning(f"⚠️ Columnas no encontradas en el archivo (se omiten los análisis que las requieren): {', '.join(faltantes)}")
+
+            # --- Fechas ---
+            for col_fecha in ['F Firma PO', 'F Prevista de entrega', 'F Entrega']:
+                if col_fecha in df_po.columns:
+                    df_po[col_fecha] = pd.to_datetime(df_po[col_fecha], errors='coerce')
+            if 'F Asignacion Tabla' in df_po.columns:
+                df_po['F Asignacion Tabla'] = pd.to_datetime(df_po['F Asignacion Tabla'], errors='coerce')
+            if 'F Prevista de entrega' in df_po.columns:
+                df_po.loc[df_po['F Prevista de entrega'] < pd.Timestamp('1950-01-01'), 'F Prevista de entrega'] = pd.NaT
+
+            # --- Tiempo de emisión de PO (días) ---
+            if 'F Firma PO' in df_po.columns and 'F Asignacion Tabla' in df_po.columns:
+                df_po['Días Emisión PO'] = (df_po['F Firma PO'] - df_po['F Asignacion Tabla']).dt.days
+
+                hoy = pd.Timestamp(datetime.now().date())
+                df_po['Días Esperando PO'] = np.where(
+                    df_po['F Firma PO'].isna() & df_po['F Asignacion Tabla'].notna(),
+                    (hoy - df_po['F Asignacion Tabla']).dt.days,
+                    np.nan
+                )
+
+            # --- Estado PO legible ---
+            # 0: PO emitida y entregada a tiempo | 1: PO emitida, en seguimiento/entrega | 2: sin emitir PO aún
+            if 'Estado PO' in df_po.columns:
+                mapa_estado_po = {
+                    0: 'PO emitida - entregada a tiempo',
+                    1: 'PO emitida - en seguimiento/entrega',
+                    2: 'Sin emitir PO aún'
+                }
+                df_po['Estado PO (detalle)'] = df_po['Estado PO'].map(mapa_estado_po).fillna('Desconocido')
+
+            # --- Estado_TD parseado ---
+            if 'Estado_TD' in df_po.columns:
+                df_po['Estado Entrega (detalle)'] = df_po['Estado_TD'].apply(clasificar_estado_td)
+
+            # --- Solo Source normalizado ---
+            if 'Solo Source' in df_po.columns:
+                df_po['Solo Source (norm)'] = df_po['Solo Source'].astype(str).str.strip().str.upper()
+                df_po.loc[~df_po['Solo Source (norm)'].isin(['SI', 'NO']), 'Solo Source (norm)'] = np.nan
+
+            # --- IVA estimado (US_Subtotal_I_1 con IVA vs Subtotal Ítem sin IVA) ---
+            if 'US_Subtotal_I_1' in df_po.columns and 'Subtotal Ítem' in df_po.columns:
+                df_po['IVA Estimado'] = df_po['US_Subtotal_I_1'] - df_po['Subtotal Ítem']
+
+            # --- Ahorro potencial por negociación (mejor precio alterno vs el pagado) ---
+            if all(c in df_po.columns for c in ['Precio U', 'Precio U2', 'Precio U3', 'Cant_PO']):
+                df_po['Mejor Precio Alterno'] = df_po[['Precio U2', 'Precio U3']].min(axis=1, skipna=True)
+                df_po['Ahorro Potencial Unitario'] = (df_po['Precio U'] - df_po['Mejor Precio Alterno']).clip(lower=0)
+                df_po['Ahorro Potencial Total'] = df_po['Ahorro Potencial Unitario'] * df_po['Cant_PO']
+
+            # --- Severidad de retraso (solo aplica a PO ya emitidas, T Retraso) ---
+            if 'T Retraso' in df_po.columns:
+                df_po['Bucket Retraso'] = df_po['T Retraso'].apply(bucket_severidad_retraso)
+
+            # --- Categoría de material (reutiliza la misma clasificación del resto de la app,
+            # incluyendo el refinamiento por grupo y la pista de departamento) ---
+            if 'Nombre Material' in df_po.columns:
+                df_po['Categoría'] = df_po.apply(clasificar_requerimiento, axis=1)
+
+                col_td_dash = encontrar_columna_tabla_demanda(df_po)
+                if col_td_dash:
+                    llave_grupo_dash = df_po[col_td_dash]
+
+                    def _moda_valida_dash(serie):
+                        especificas = serie[serie != 'FERRETERÍA GENERAL']
+                        if especificas.empty:
+                            return pd.Series({'categoria': None, 'proporcion': 0.0})
+                        moda = especificas.mode()
+                        if moda.empty:
+                            return pd.Series({'categoria': None, 'proporcion': 0.0})
+                        cat = moda.iloc[0]
+                        return pd.Series({'categoria': cat, 'proporcion': (especificas == cat).mean()})
+
+                    resumen_modas_dash = df_po.groupby(llave_grupo_dash)['Categoría'].apply(_moda_valida_dash).unstack()
+                    mapa_moda_dash = resumen_modas_dash[resumen_modas_dash['proporcion'] >= 0.5]['categoria'].to_dict()
+                    es_generico_dash = df_po['Categoría'] == 'FERRETERÍA GENERAL'
+                    categoria_sugerida_dash = llave_grupo_dash.map(mapa_moda_dash)
+                    aplicar_dash = es_generico_dash & categoria_sugerida_dash.notna()
+                    df_po.loc[aplicar_dash, 'Categoría'] = categoria_sugerida_dash[aplicar_dash]
+
+                    # Pista adicional por departamento (código en Tabla Demanda), no determinante
+                    df_po['_codigo_depto_dash'] = df_po[col_td_dash].apply(extraer_codigo_departamento)
+                    df_po['Departamento (Tabla Demanda)'] = df_po['_codigo_depto_dash'].map(
+                        lambda c: NOMENCLATURA_TABLA_DEMANDA.get(c, {}).get('departamento', '')
+                    )
+
+                    def _aplicar_pista_departamento_dash(fila):
+                        if fila['Categoría'] != 'FERRETERÍA GENERAL':
+                            return fila['Categoría']
+                        info = NOMENCLATURA_TABLA_DEMANDA.get(fila['_codigo_depto_dash'])
+                        if info and len(info['categorias_probables']) == 1:
+                            candidata = info['categorias_probables'][0]
+                            if candidata != 'FERRETERÍA GENERAL':
+                                return candidata
+                        return fila['Categoría']
+
+                    df_po['Categoría'] = df_po.apply(_aplicar_pista_departamento_dash, axis=1)
+
+            # --- Año / Mes para filtros ---
+            if 'N_Año' in df_po.columns:
+                df_po['_Año'] = df_po['N_Año']
+                if 'F Asignacion Tabla' in df_po.columns:
+                    df_po['_Año'] = df_po['_Año'].fillna(df_po['F Asignacion Tabla'].dt.year)
+            elif 'F Asignacion Tabla' in df_po.columns:
+                df_po['_Año'] = df_po['F Asignacion Tabla'].dt.year
+
+            if 'N_Mes' in df_po.columns:
+                df_po['_Mes'] = df_po['N_Mes']
+                if 'F Asignacion Tabla' in df_po.columns:
+                    df_po['_Mes'] = df_po['_Mes'].fillna(df_po['F Asignacion Tabla'].dt.month)
+            elif 'F Asignacion Tabla' in df_po.columns:
+                df_po['_Mes'] = df_po['F Asignacion Tabla'].dt.month
+
+        st.success(f"✅ {len(df_po)} registros cargados.")
+
+        # ================== FILTROS ==================
+        st.subheader("🔎 Filtros")
+        colf1, colf2, colf3, colf4 = st.columns(4)
+        with colf1:
+            años_disponibles = sorted([int(a) for a in df_po['_Año'].dropna().unique()])
+            f_anios = st.multiselect("Año", años_disponibles, default=años_disponibles)
+        with colf2:
+            nombres_mes = {1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+                            7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'}
+            meses_disponibles = sorted([int(m) for m in df_po['_Mes'].dropna().unique()])
+            f_meses = st.multiselect(
+                "Mes", meses_disponibles, default=meses_disponibles,
+                format_func=lambda m: nombres_mes.get(m, str(m))
+            )
+        with colf3:
+            compradores_disponibles = sorted(df_po['Comprador'].dropna().unique())
+            f_compradores = st.multiselect("Comprador", compradores_disponibles, default=compradores_disponibles)
+        with colf4:
+            proveedores_disponibles = sorted(df_po['Proveedor'].dropna().unique())
+            f_proveedores = st.multiselect(
+                "Proveedor (vacío = todos)", proveedores_disponibles, default=[]
+            )
+
+        df_f = df_po[
+            df_po['_Año'].isin(f_anios) &
+            df_po['_Mes'].isin(f_meses) &
+            df_po['Comprador'].isin(f_compradores)
+        ].copy()
+        if f_proveedores:
+            df_f = df_f[df_f['Proveedor'].isin(f_proveedores)]
+
+        st.caption(f"Mostrando {len(df_f):,} de {len(df_po):,} ítems según los filtros seleccionados.")
+
+        if df_f.empty:
+            st.warning("No hay datos para los filtros seleccionados.")
+        else:
+            # ================== RESUMEN KPI ==================
+            st.markdown("### 📌 Resumen General")
+            total_items = len(df_f)
+            total_pos = df_f['Num PO'].nunique() if 'Num PO' in df_f.columns else np.nan
+            gasto_total = df_f['US_Subtotal_I_1'].sum() if 'US_Subtotal_I_1' in df_f.columns else np.nan
+            otd = (df_f['Estado Pos'] == 'Ok').mean() * 100 if 'Estado Pos' in df_f.columns else np.nan
+            dias_emision_prom = df_f['Días Emisión PO'].mean() if 'Días Emisión PO' in df_f.columns else np.nan
+            retraso_prom_activo = (
+                df_f.loc[df_f['Estado PO'] == 1, 'T Retraso'].mean()
+                if 'Estado PO' in df_f.columns and 'T Retraso' in df_f.columns else np.nan
+            )
+            pct_sole_source = (
+                (df_f['Solo Source (norm)'] == 'SI').mean() * 100
+                if 'Solo Source (norm)' in df_f.columns and df_f['Solo Source (norm)'].notna().any() else np.nan
+            )
+            ahorro_total = df_f['Ahorro Potencial Total'].sum() if 'Ahorro Potencial Total' in df_f.columns else np.nan
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total ítems", f"{total_items:,}")
+            k2.metric("Gasto total (USD, c/IVA)", f"${gasto_total:,.0f}" if pd.notna(gasto_total) else "N/D")
+            k3.metric("OTD (On-Time Delivery)", f"{otd:.1f}%" if pd.notna(otd) else "N/D")
+            k4.metric(
+                "Días prom. emisión PO", f"{dias_emision_prom:.1f}" if pd.notna(dias_emision_prom) else "N/D",
+                help="Objetivo sugerido: < 5 días"
+            )
+
+            k5, k6, k7, k8 = st.columns(4)
+            k5.metric("PO's únicas", f"{total_pos:,.0f}" if pd.notna(total_pos) else "N/D")
+            k6.metric(
+                "Retraso prom. (PO ya emitidas)",
+                f"{retraso_prom_activo:.0f} días" if pd.notna(retraso_prom_activo) else "N/D"
+            )
+            k7.metric(
+                "% Sole Source", f"{pct_sole_source:.1f}%" if pd.notna(pct_sole_source) else "N/D",
+                help="Objetivo sugerido: < 20%"
+            )
+            k8.metric("Ahorro potencial por negociación", f"${ahorro_total:,.0f}" if pd.notna(ahorro_total) else "N/D")
+
+            st.caption(
+                "ℹ️ 'Sin emitir PO aún' (Estado PO = 2) representa ítems que todavía no tienen orden de compra "
+                "firmada; para esos, el indicador relevante es 'Días Esperando PO' (ver sección de Eficiencia), "
+                "no el retraso de entrega."
+            )
+
+            # ================== 1. EFICIENCIA DEL PROCESO ==================
+            st.markdown("---")
+            st.header("⏱️ 1. Desempeño del Proceso de Compras")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if 'Días Emisión PO' in df_f.columns:
+                    fig = px.histogram(
+                        df_f.dropna(subset=['Días Emisión PO']), x='Días Emisión PO', nbins=30,
+                        title='Distribución: días para emitir la PO (F Firma PO - F Asignación)'
+                    )
+                    fig.add_vline(x=5, line_dash='dash', line_color='red',
+                                  annotation_text='Objetivo: 5 días')
+                    st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                if 'Días Esperando PO' in df_f.columns:
+                    pendientes = df_f.dropna(subset=['Días Esperando PO'])
+                    if not pendientes.empty:
+                        fig = px.histogram(
+                            pendientes, x='Días Esperando PO', nbins=30,
+                            title='Ítems SIN PO aún: días en espera de emisión'
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No hay ítems pendientes de emisión de PO en el filtro actual.")
+
+            col3, col4 = st.columns(2)
+            with col3:
+                vol_comprador = df_f['Comprador'].value_counts().reset_index()
+                vol_comprador.columns = ['Comprador', 'Número de ítems']
+                fig = px.bar(
+                    vol_comprador, x='Comprador', y='Número de ítems',
+                    title='Volumen de ítems gestionados por Comprador', text='Número de ítems'
+                )
+                fig.update_layout(xaxis_tickangle=-30)
+                st.plotly_chart(fig, use_container_width=True)
+            with col4:
+                if 'US_Subtotal_I_1' in df_f.columns:
+                    gasto_comprador = df_f.groupby('Comprador')['US_Subtotal_I_1'].sum().sort_values(ascending=False).reset_index()
+                    gasto_comprador.columns = ['Comprador', 'Gasto Total (USD)']
+                    fig = px.bar(
+                        gasto_comprador, x='Comprador', y='Gasto Total (USD)',
+                        title='Gasto total gestionado por Comprador (USD, c/IVA)'
+                    )
+                    fig.update_layout(xaxis_tickangle=-30)
+                    st.plotly_chart(fig, use_container_width=True)
+
+            # ================== 2. DESEMPEÑO DE ENTREGAS / PROVEEDORES ==================
+            st.markdown("---")
+            st.header("🚚 2. Desempeño de Entregas y Proveedores")
+
+            col5, col6 = st.columns(2)
+            with col5:
+                if 'Estado PO (detalle)' in df_f.columns:
+                    fig = px.pie(
+                        df_f, names='Estado PO (detalle)', title='Distribución por Estado de la PO', hole=0.4
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            with col6:
+                if 'Estado Entrega (detalle)' in df_f.columns:
+                    estado_td_counts = df_f['Estado Entrega (detalle)'].value_counts().reset_index()
+                    estado_td_counts.columns = ['Estado', 'Cantidad']
+                    fig = px.bar(
+                        estado_td_counts, x='Estado', y='Cantidad', title='Estado detallado de entrega (Estado_TD)',
+                        color='Estado'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+            if 'Bucket Retraso' in df_f.columns and 'Estado PO' in df_f.columns:
+                df_activas = df_f[df_f['Estado PO'] == 1]
+                if not df_activas.empty:
+                    col7, col8 = st.columns(2)
+                    with col7:
+                        bucket_counts = df_activas['Bucket Retraso'].value_counts().reindex(
+                            ['Sin retraso', 'Leve (1-30 días)', 'Moderado (31-90 días)',
+                             'Crítico (91-180 días)', 'Severo (>180 días)']
+                        ).fillna(0).reset_index()
+                        bucket_counts.columns = ['Severidad', 'Cantidad']
+                        fig = px.bar(
+                            bucket_counts, x='Severidad', y='Cantidad', title='Ítems (con PO emitida) por severidad de retraso',
+                            color='Severidad'
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    with col8:
+                        if 'Proveedor' in df_activas.columns:
+                            retraso_prov = (
+                                df_activas.groupby('Proveedor')['T Retraso']
+                                .agg(['mean', 'count']).query('count >= 2')
+                                .sort_values('mean', ascending=False).head(15).reset_index()
+                            )
+                            retraso_prov.columns = ['Proveedor', 'Retraso Promedio (días)', 'Núm. Ítems']
+                            fig = px.bar(
+                                retraso_prov, x='Retraso Promedio (días)', y='Proveedor', orientation='h',
+                                title='Top 15 proveedores por retraso promedio (mín. 2 ítems)'
+                            )
+                            fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+                            st.plotly_chart(fig, use_container_width=True)
+
+            # ================== 3. ANÁLISIS DE COSTOS ==================
+            st.markdown("---")
+            st.header("💰 3. Análisis de Costos")
+
+            col9, col10 = st.columns(2)
+            with col9:
+                if 'US_Subtotal_I_1' in df_f.columns and '_Año' in df_f.columns and '_Mes' in df_f.columns:
+                    df_temp = df_f.dropna(subset=['_Año', '_Mes']).copy()
+                    df_temp['Periodo'] = df_temp['_Año'].astype(int).astype(str) + '-' + df_temp['_Mes'].astype(int).astype(str).str.zfill(2)
+                    gasto_periodo = df_temp.groupby('Periodo')['US_Subtotal_I_1'].sum().reset_index().sort_values('Periodo')
+                    fig = px.line(
+                        gasto_periodo, x='Periodo', y='US_Subtotal_I_1', markers=True,
+                        title='Gasto total por período (USD, c/IVA)'
+                    )
+                    fig.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig, use_container_width=True)
+            with col10:
+                if 'IVA Estimado' in df_f.columns:
+                    iva_total = df_f['IVA Estimado'].sum()
+                    iva_pct = (df_f['IVA Estimado'].sum() / df_f['Subtotal Ítem'].sum() * 100) if df_f['Subtotal Ítem'].sum() else np.nan
+                    st.metric("IVA total estimado", f"${iva_total:,.0f}")
+                    st.metric("Impacto IVA (% sobre subtotal)", f"{iva_pct:.1f}%" if pd.notna(iva_pct) else "N/D")
+                    fig = px.box(df_f, y='IVA Estimado', title='Distribución del IVA estimado por ítem')
+                    st.plotly_chart(fig, use_container_width=True)
+
+            if 'Categoría' in df_f.columns and 'US_Subtotal_I_1' in df_f.columns:
+                st.markdown("#### Análisis ABC (Pareto) por Categoría")
+                gasto_cat = df_f.groupby('Categoría')['US_Subtotal_I_1'].sum().sort_values(ascending=False).reset_index()
+                gasto_cat['% Acumulado'] = gasto_cat['US_Subtotal_I_1'].cumsum() / gasto_cat['US_Subtotal_I_1'].sum() * 100
+                gasto_cat['Clase ABC'] = pd.cut(
+                    gasto_cat['% Acumulado'], bins=[0, 80, 95, 100], labels=['A', 'B', 'C'], include_lowest=True
+                )
+                fig = px.bar(gasto_cat, x='Categoría', y='US_Subtotal_I_1', color='Clase ABC',
+                             title='Gasto por Categoría (clasificación ABC)')
+                fig.add_scatter(x=gasto_cat['Categoría'], y=gasto_cat['% Acumulado'], mode='lines+markers',
+                                 name='% Acumulado', yaxis='y2')
+                fig.update_layout(
+                    xaxis_tickangle=-30,
+                    yaxis2=dict(overlaying='y', side='right', range=[0, 105], title='% Acumulado')
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                with st.expander("Ver tabla ABC completa"):
+                    st.dataframe(gasto_cat, use_container_width=True)
+
+            # ================== 4. RIESGO Y COMPARACIÓN DE PROVEEDORES ==================
+            st.markdown("---")
+            st.header("⚠️ 4. Riesgo y Comparación de Proveedores")
+
+            col11, col12 = st.columns(2)
+            with col11:
+                if 'Solo Source (norm)' in df_f.columns and df_f['Solo Source (norm)'].notna().any():
+                    ss_counts = df_f['Solo Source (norm)'].value_counts().reset_index()
+                    ss_counts.columns = ['Solo Source', 'Cantidad']
+                    fig = px.pie(ss_counts, names='Solo Source', values='Cantidad',
+                                 title='% de ítems Sole Source (proveedor único)', hole=0.4)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No hay datos suficientes de 'Solo Source' en el filtro actual.")
+            with col12:
+                if all(c in df_f.columns for c in ['Proveedor', 'US_Subtotal_I_1', 'T Retraso']):
+                    matriz = df_f.groupby('Proveedor').agg(
+                        Gasto_Total=('US_Subtotal_I_1', 'sum'),
+                        Retraso_Prom=('T Retraso', 'mean'),
+                        Num_Items=('Proveedor', 'count')
+                    ).query('Num_Items >= 2').reset_index()
+                    if not matriz.empty:
+                        fig = px.scatter(
+                            matriz, x='Retraso_Prom', y='Gasto_Total', size='Num_Items', hover_name='Proveedor',
+                            title='Matriz de riesgo: Gasto vs Retraso promedio por proveedor',
+                            labels={'Retraso_Prom': 'Retraso promedio (días)', 'Gasto_Total': 'Gasto total (USD)'}
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+            if 'Ahorro Potencial Total' in df_f.columns:
+                st.markdown("#### Oportunidades de ahorro por negociación (Precio U vs. mejores alternativas)")
+                ahorro_prov = (
+                    df_f[df_f['Ahorro Potencial Total'] > 0]
+                    .groupby('Proveedor')['Ahorro Potencial Total']
+                    .sum().sort_values(ascending=False).head(15).reset_index()
+                )
+                if not ahorro_prov.empty:
+                    fig = px.bar(
+                        ahorro_prov, x='Ahorro Potencial Total', y='Proveedor', orientation='h',
+                        title='Top 15 proveedores con mayor ahorro potencial si se usa la mejor alternativa'
+                    )
+                    fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No se detectaron oportunidades de ahorro (Precio U ya es el más bajo) en el filtro actual.")
+
+            # ================== 5. TEMPORALIDAD ==================
+            st.markdown("---")
+            st.header("📅 5. Temporalidad")
+
+            col13, col14 = st.columns(2)
+            with col13:
+                if '_Año' in df_f.columns and '_Mes' in df_f.columns:
+                    df_temp2 = df_f.dropna(subset=['_Año', '_Mes']).copy()
+                    df_temp2['Periodo'] = df_temp2['_Año'].astype(int).astype(str) + '-' + df_temp2['_Mes'].astype(int).astype(str).str.zfill(2)
+                    vol_periodo = df_temp2.groupby('Periodo').size().reset_index(name='Número de ítems').sort_values('Periodo')
+                    fig = px.bar(vol_periodo, x='Periodo', y='Número de ítems', title='Volumen de compras por período')
+                    fig.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig, use_container_width=True)
+            with col14:
+                if 'Num Días Entrega' in df_f.columns:
+                    fig = px.histogram(
+                        df_f.dropna(subset=['Num Días Entrega']), x='Num Días Entrega', nbins=30,
+                        title='Lead time comprometido (Num Días Entrega)'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+            # ================== TABLA DETALLE ==================
+            st.markdown("---")
+            with st.expander("📋 Ver tabla de datos filtrados"):
+                columnas_mostrar = [c for c in [
+                    'Num PO', 'Tabla Demanda', 'Departamento (Tabla Demanda)', 'Comprador', 'Proveedor',
+                    'Nombre Material', 'Categoría', 'Estado PO (detalle)', 'Estado Entrega (detalle)',
+                    'T Retraso', 'Días Emisión PO', 'Días Esperando PO', 'Precio U', 'Precio U2', 'Precio U3',
+                    'Ahorro Potencial Total', 'US_Subtotal_I_1', 'Solo Source (norm)', '_Año', '_Mes'
+                ] if c in df_f.columns]
+                st.dataframe(df_f[columnas_mostrar], use_container_width=True)
+
+    except Exception as e:
+        st.error(f"❌ Error al procesar el archivo del dashboard: {str(e)}")
+        st.info("💡 Verifica que el archivo tenga las columnas esperadas del reporte de estado de PO's.")
