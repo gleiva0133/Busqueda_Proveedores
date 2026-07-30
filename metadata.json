@@ -1,0 +1,6 @@
+{
+  "name": "Buscador de Proveedores Mineros",
+  "description": "Buscador inteligente de proveedores mineros e industriales con análisis de requerimientos, emparejamiento mejorado y dashboard de performance de compras.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
