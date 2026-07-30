@@ -11,9 +11,11 @@ import {
   PieChart as PieChartIcon,
   BarChart2,
   Calendar,
-  Filter
+  Filter,
+  RefreshCw
 } from 'lucide-react';
 import { PODashboardItem } from '../types';
+import { MultiSelectFilter } from './MultiSelectFilter';
 import {
   BarChart,
   Bar,
@@ -25,11 +27,7 @@ import {
   CartesianGrid,
   PieChart,
   Pie,
-  Cell,
-  LineChart,
-  Line,
-  ScatterChart,
-  Scatter
+  Cell
 } from 'recharts';
 
 interface PODashboardTabProps {
@@ -40,22 +38,32 @@ interface PODashboardTabProps {
 const COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#06b6d4', '#64748b'];
 
 export const PODashboardTab: React.FC<PODashboardTabProps> = ({ poItems, onUploadPODashboard }) => {
-  const [selectedYear, setSelectedYear] = useState<string>('ALL');
-  const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
-  const [selectedBuyer, setSelectedBuyer] = useState<string>('ALL');
+  const [selectedYears, setSelectedYears] = useState<string[]>([]);
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
+  const [selectedBuyers, setSelectedBuyers] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
   // Extract filter options
   const years = Array.from(new Set(poItems.map(i => i.nAnio).filter(Boolean))).sort() as number[];
   const months = Array.from(new Set(poItems.map(i => i.nMes).filter(Boolean))).sort() as number[];
   const buyers = Array.from(new Set(poItems.map(i => i.comprador).filter(Boolean))).sort() as string[];
+  const categories = Array.from(new Set(poItems.map(i => i.categoria).filter(Boolean))).sort() as string[];
 
-  // Filter Items
+  // Multi-select Filter logic
   const filteredPOItems = poItems.filter(item => {
-    const matchesYear = selectedYear === 'ALL' || String(item.nAnio) === selectedYear;
-    const matchesMonth = selectedMonth === 'ALL' || String(item.nMes) === selectedMonth;
-    const matchesBuyer = selectedBuyer === 'ALL' || item.comprador === selectedBuyer;
-    return matchesYear && matchesMonth && matchesBuyer;
+    const matchesYear = selectedYears.length === 0 || selectedYears.includes(String(item.nAnio));
+    const matchesMonth = selectedMonths.length === 0 || selectedMonths.includes(String(item.nMes));
+    const matchesBuyer = selectedBuyers.length === 0 || selectedBuyers.includes(item.comprador);
+    const matchesCategory = selectedCategories.length === 0 || selectedCategories.includes(item.categoria);
+    return matchesYear && matchesMonth && matchesBuyer && matchesCategory;
   });
+
+  const handleResetFilters = () => {
+    setSelectedYears([]);
+    setSelectedMonths([]);
+    setSelectedBuyers([]);
+    setSelectedCategories([]);
+  };
 
   // Calculate Official Spend Items (Issued POs and NOT cancelled)
   const officialIssuedItems = filteredPOItems.filter(i => i.fFirmaPO && !i.esCancelado);
@@ -171,53 +179,59 @@ export const PODashboardTab: React.FC<PODashboardTabProps> = ({ poItems, onUploa
       </div>
 
       {/* Filters */}
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-sm grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div>
-          <label className="block text-slate-400 text-[11px] mb-1 font-medium">Año</label>
-          <select
-            value={selectedYear}
-            onChange={e => setSelectedYear(e.target.value)}
-            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="ALL">Todos los Años ({years.length})</option>
-            {years.map(y => (
-              <option key={y} value={String(y)}>
-                {y}
-              </option>
-            ))}
-          </select>
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-sm space-y-3">
+        <div className="flex items-center justify-between pb-2 border-b border-slate-700/80">
+          <div className="flex items-center space-x-2 text-xs font-bold text-white">
+            <Filter className="w-4 h-4 text-amber-400" />
+            <span>Filtros Avanzados Multiselección</span>
+            <span className="text-[10px] text-slate-400 font-normal">
+              (Puedes escoger varias opciones a la vez)
+            </span>
+          </div>
+
+          {(selectedYears.length > 0 || selectedMonths.length > 0 || selectedBuyers.length > 0 || selectedCategories.length > 0) && (
+            <button
+              onClick={handleResetFilters}
+              className="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1 font-medium transition"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Limpiar Todos los Filtros</span>
+            </button>
+          )}
         </div>
 
-        <div>
-          <label className="block text-slate-400 text-[11px] mb-1 font-medium">Mes</label>
-          <select
-            value={selectedMonth}
-            onChange={e => setSelectedMonth(e.target.value)}
-            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="ALL">Todos los Meses ({months.length})</option>
-            {months.map(m => (
-              <option key={m} value={String(m)}>
-                Mes {m}
-              </option>
-            ))}
-          </select>
-        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MultiSelectFilter
+            label="Años"
+            options={years}
+            selectedValues={selectedYears}
+            onChange={setSelectedYears}
+            placeholder="Todos los Años"
+          />
 
-        <div>
-          <label className="block text-slate-400 text-[11px] mb-1 font-medium">Comprador</label>
-          <select
-            value={selectedBuyer}
-            onChange={e => setSelectedBuyer(e.target.value)}
-            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="ALL">Todos los Compradores ({buyers.length})</option>
-            {buyers.map(b => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
+          <MultiSelectFilter
+            label="Meses"
+            options={months.map(m => `Mes ${m}`)}
+            selectedValues={selectedMonths}
+            onChange={setSelectedMonths}
+            placeholder="Todos los Meses"
+          />
+
+          <MultiSelectFilter
+            label="Compradores"
+            options={buyers}
+            selectedValues={selectedBuyers}
+            onChange={setSelectedBuyers}
+            placeholder="Todos los Compradores"
+          />
+
+          <MultiSelectFilter
+            label="Categorías"
+            options={categories}
+            selectedValues={selectedCategories}
+            onChange={setSelectedCategories}
+            placeholder="Todas las Categorías"
+          />
         </div>
       </div>
 
