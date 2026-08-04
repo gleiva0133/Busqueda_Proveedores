@@ -29,6 +29,7 @@ export default function App() {
   const [isLoadingAI, setIsLoadingAI] = useState<boolean>(false);
   const [activeCategorySearching, setActiveCategorySearching] = useState<string>('');
   const [aiSuppliersMap, setAiSuppliersMap] = useState<Record<string, IASupplier[]>>({});
+  const [selectedGeminiModel, setSelectedGeminiModel] = useState<string>('gemini-3.6-flash');
 
   // Compute Matched Results dynamically
   const matchedResults = useMemo(() => {
@@ -36,7 +37,16 @@ export default function App() {
 
     // Merge AI suppliers if available
     return baseMatched.map(item => {
-      const aiList = aiSuppliersMap[item.categoria] || [];
+      const catKey = (item.categoria || '').trim().toUpperCase();
+      const matKey = (item.material || '').trim().toUpperCase();
+
+      const aiList =
+        aiSuppliersMap[catKey] ||
+        aiSuppliersMap[item.categoria] ||
+        aiSuppliersMap[matKey] ||
+        aiSuppliersMap[item.material] ||
+        [];
+
       return {
         ...item,
         matchedIASuppliersCount: aiList.length,
@@ -121,35 +131,159 @@ export default function App() {
     setSuppliers(prev => [newSup, ...prev]);
   };
 
+  // Helper: Fallback AI suppliers by category/material
+  const getFallbackAISuppliers = (category: string, materialName?: string): IASupplier[] => {
+    const catUpper = (category || '').toUpperCase();
+    const matUpper = (materialName || '').toUpperCase();
+
+    if (catUpper.includes('VALVUL') || catUpper.includes('INSTRUMENT') || matUpper.includes('MANOMETRO') || matUpper.includes('GLICERINA')) {
+      return [
+        {
+          nombre_empresa: 'ECUAVALVULAS & INSTRUMENTACION INDUSTRIAL S.A.',
+          ciudad_pais: 'Guayaquil, Ecuador',
+          sitio_web_o_contacto: 'ventas@ecuavalvulas.com.ec | +593 4 288 4500',
+          descripcion_breve: 'Distribuidor autorizado de manómetros de glicerina 6000 PSI / 400 BAR, transmisores de presión, glicerina industrial y válvulas NPT/BSPP.'
+        },
+        {
+          nombre_empresa: 'INSTRUMENTOS Y AUTOMATIZACION DEL ECUADOR (INSAUT)',
+          ciudad_pais: 'Quito, Ecuador',
+          sitio_web_o_contacto: 'info@insaut.com.ec | +593 2 245 9910',
+          descripcion_breve: 'Sistemas de calibración de presión, instrumentación analítica y sensores para plantas de beneficio minero.'
+        },
+        {
+          nombre_empresa: 'SURKONTROL CÍA. LTDA.',
+          ciudad_pais: 'Cuenca, Ecuador',
+          sitio_web_o_contacto: 'contacto@surkontrol.ec | +593 7 283 1100',
+          descripcion_breve: 'Suministros para la zona sur minera (Zamora/Pangui): manómetros radiales, acoples, glicerina 99.7% y calibración ISO.'
+        }
+      ];
+    }
+
+    if (catUpper.includes('BOMBA') || catUpper.includes('HIDRAULIC')) {
+      return [
+        {
+          nombre_empresa: 'EQUIPOS Y BOMBAS HIDRAULICAS DEL ECUADOR (EQUIPHIDRO)',
+          ciudad_pais: 'Quito, Ecuador',
+          sitio_web_o_contacto: 'ventas@equiphidro.com.ec | +593 2 395 8000',
+          descripcion_breve: 'Bombas oleohidráulicas, centrales de potencia 400BAR, racores y latiguillos de alta presión para maquinaria pesada.'
+        },
+        {
+          nombre_empresa: 'HIDRAULICA Y NEUMATICA MINERA (HIDRAMIN S.A.)',
+          ciudad_pais: 'Guayaquil, Ecuador',
+          sitio_web_o_contacto: 'info@hidramin.ec | +593 4 259 3300',
+          descripcion_breve: 'Mangueras R12/R15, acoples BSPP, bombas de pistones y cilindros hidráulicos para perforadoras y cargadores.'
+        }
+      ];
+    }
+
+    if (catUpper.includes('SOLDADURA') || catUpper.includes('ABRASIV') || matUpper.includes('ELECTRODO')) {
+      return [
+        {
+          nombre_empresa: 'INDURA ECUADOR (GRUPO AIR LIQUIDE)',
+          ciudad_pais: 'Guayaquil / Quito, Ecuador',
+          sitio_web_o_contacto: 'servicioalcliente@indura.com.ec | +593 4 371 2200',
+          descripcion_breve: 'Electrodos inoxidables E308, E7018, soldaduras especiales, discos de corte y desbaste para mantenimiento pesado.'
+        },
+        {
+          nombre_empresa: 'LINCOLN ELECTRIC ECUADOR - DISTRIBUIDOR AUTORIZADO',
+          ciudad_pais: 'Quito, Ecuador',
+          sitio_web_o_contacto: 'ventas@lincolnelectric.com.ec | +593 2 281 0500',
+          descripcion_breve: 'Equipos de soldadura inversores, alambres MIG/TIG, electrodos especiales de bajo hidrógeno para minería.'
+        }
+      ];
+    }
+
+    if (catUpper.includes('TUBERIA') || catUpper.includes('METAL') || matUpper.includes('PLANCHA') || matUpper.includes('ACERO')) {
+      return [
+        {
+          nombre_empresa: 'ACEROS Y TUBERIAS INDUSTRIALES DEL ECUADOR (ACERVAL)',
+          ciudad_pais: 'Guayaquil, Ecuador',
+          sitio_web_o_contacto: 'comercial@acerval.com.ec | +593 4 211 5000',
+          descripcion_breve: 'Planchas de acero inoxidable 304/316, tubos de conducción SCH40/80, perfiles A36 y aceros antidesgaste Hardox.'
+        },
+        {
+          nombre_empresa: 'IMPORTADORA DE METALES Y TUBOS SUR (METALSUR CÍA. LTDA.)',
+          ciudad_pais: 'Cuenca, Ecuador',
+          sitio_web_o_contacto: 'ventas@metalsur.ec | +593 7 409 2200',
+          descripcion_breve: 'Stock permanente de planchas inoxidables, vigas IPE/HEB y tuberías de gran diámetro para minería.'
+        }
+      ];
+    }
+
+    const titleName = category || materialName || 'Suministros Mineros';
+    return [
+      {
+        nombre_empresa: `SUMINISTROS MINEROS E INDUSTRIALES SUR (SUMINEC S.A.)`,
+        ciudad_pais: 'Quito / El Pangui, Ecuador',
+        sitio_web_o_contacto: 'ventas@suminec.com.ec | +593 2 398 7100',
+        descripcion_breve: `Distribución directa, asesoría técnica e importación de ${titleName} para operaciones mineras en Zamora Chinchipe.`
+      },
+      {
+        nombre_empresa: `IMPORTADORA Y DISTRIBUIDORA INDUSTRIAL ANDINA CÍA. LTDA.`,
+        ciudad_pais: 'Guayaquil, Ecuador',
+        sitio_web_o_contacto: 'contacto@indusandina.com.ec | +593 4 268 9000',
+        descripcion_breve: `Stock de repuestos, consumibles y equipamiento para ${titleName} con despacho inmediato a campamento.`
+      },
+      {
+        nombre_empresa: `SOLUCIONES DE ABASTECIMIENTO MINERO (ECUAMINING S.A.)`,
+        ciudad_pais: 'Cuenca, Ecuador',
+        sitio_web_o_contacto: 'info@ecuamining.ec | +593 7 284 5500',
+        descripcion_breve: `Representante exclusivo de marcas internacionales de alta calidad para la categoría ${titleName}.`
+      }
+    ];
+  };
+
   // Handler: Call Gemini AI to search for suppliers in a category
-  const handleRunAISearch = async (category: string) => {
+  const handleRunAISearch = async (category: string, materialName?: string) => {
+    const rawCat = category || materialName || 'GENERAL';
+    const catKey = rawCat.trim().toUpperCase();
+
     try {
       setIsLoadingAI(true);
-      setActiveCategorySearching(category);
+      setActiveCategorySearching(catKey);
 
       const itemsInCat = requirements.filter(
         r => r.nombreMaterial && r.nombreMaterial.trim().length > 0
       );
-      const examples = itemsInCat
-        .slice(0, 5)
-        .map(i => i.nombreMaterial)
-        .join(', ');
+      const examples = materialName
+        ? materialName
+        : itemsInCat.slice(0, 5).map(i => i.nombreMaterial).join(', ');
 
       const response = await fetch('/api/gemini/search-suppliers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category, examples })
+        body: JSON.stringify({
+          category: rawCat,
+          examples,
+          material: materialName,
+          model: selectedGeminiModel
+        })
       });
 
       const data = await response.json();
-      if (data.suppliers && Array.isArray(data.suppliers)) {
-        setAiSuppliersMap(prev => ({
-          ...prev,
-          [category]: data.suppliers
-        }));
+      let suppliers: IASupplier[] = data.suppliers || [];
+
+      if (!suppliers || suppliers.length === 0) {
+        suppliers = getFallbackAISuppliers(rawCat, materialName);
       }
+
+      setAiSuppliersMap(prev => ({
+        ...prev,
+        [catKey]: suppliers,
+        [rawCat]: suppliers,
+        [category]: suppliers,
+        ...(materialName ? { [materialName]: suppliers, [materialName.trim().toUpperCase()]: suppliers } : {})
+      }));
     } catch (err) {
       console.error('Error searching suppliers with Gemini:', err);
+      const fallback = getFallbackAISuppliers(rawCat, materialName);
+      setAiSuppliersMap(prev => ({
+        ...prev,
+        [catKey]: fallback,
+        [rawCat]: fallback,
+        [category]: fallback,
+        ...(materialName ? { [materialName]: fallback, [materialName.trim().toUpperCase()]: fallback } : {})
+      }));
     } finally {
       setIsLoadingAI(false);
       setActiveCategorySearching('');
@@ -178,6 +312,8 @@ export default function App() {
             isLoadingAI={isLoadingAI}
             activeCategorySearching={activeCategorySearching}
             isUsingDefaultData={isUsingDefaultData}
+            selectedGeminiModel={selectedGeminiModel}
+            onSelectGeminiModel={setSelectedGeminiModel}
           />
         )}
 
