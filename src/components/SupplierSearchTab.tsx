@@ -22,6 +22,7 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import { MatchedResultItem, Supplier, IASupplier } from '../types';
+import { MultiSelectFilter } from './MultiSelectFilter';
 import * as XLSX from 'xlsx';
 
 interface SupplierSearchTabProps {
@@ -29,14 +30,24 @@ interface SupplierSearchTabProps {
   suppliers: Supplier[];
   onUploadSuppliers: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onUploadRequirements: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onRunAISearch: (category: string) => Promise<void>;
+  onRunAISearch: (category: string, materialName?: string) => Promise<void>;
   isLoadingAI: boolean;
   activeCategorySearching?: string;
   isUsingDefaultData: boolean;
+  selectedGeminiModel?: string;
+  onSelectGeminiModel?: (model: string) => void;
 }
 
 const DEFAULT_SHAREPOINT_URL =
   'https://ecuacorrienteecuador-my.sharepoint.com/:x:/g/personal/gustavo_leiva_ecuacorrienteecuador_onmicrosoft_com/IQB4qHPGpaDnSpKKICB3FVYDAXkfVmBL5ymMol8kEHPk5e0?e=jfqFDU';
+
+import { quitarAcentos } from '../utils/supplierMatcher';
+
+const safeStr = (v: any) => quitarAcentos(String(v ?? ''));
+const containsStr = (source: any, term: string) => {
+  if (!term || term.trim() === '') return true;
+  return safeStr(source).includes(quitarAcentos(term));
+};
 
 export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
   matchedResults,
@@ -46,19 +57,20 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
   onRunAISearch,
   isLoadingAI,
   activeCategorySearching,
-  isUsingDefaultData
+  isUsingDefaultData,
+  selectedGeminiModel = 'gemini-3.6-flash',
+  onSelectGeminiModel
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [selectedQuality, setSelectedQuality] = useState<string>('ALL');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedBuyers, setSelectedBuyers] = useState<string[]>([]);
+  const [selectedQualities, setSelectedQualities] = useState<string[]>([]);
   const [expandedRow, setExpandedRow] = useState<string | number | null>(null);
 
   // Column-level filters state
   const [showColumnFilters, setShowColumnFilters] = useState<boolean>(true);
   const [colItem, setColItem] = useState<string>('');
   const [colMaterial, setColMaterial] = useState<string>('');
-  const [colCategory, setColCategory] = useState<string>('ALL');
-  const [colBuyer, setColBuyer] = useState<string>('ALL');
   const [colSuppliers, setColSuppliers] = useState<string>('ALL');
 
   // SharePoint Link Modal state
@@ -67,41 +79,51 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
   const [sharePointMessage, setSharePointMessage] = useState<string>('');
 
   // Extract unique categories and buyers
-  const categories = Array.from(new Set(matchedResults.map(r => r.categoria))).filter(Boolean).sort();
-  const buyers = Array.from(new Set(matchedResults.map(r => r.comprador))).filter(Boolean).sort();
+  const categories = Array.from(new Set(matchedResults.map(r => r.categoria).filter(Boolean))).sort();
+  const buyers = Array.from(new Set(matchedResults.map(r => r.comprador).filter(Boolean))).sort();
 
-  // Filter matched results (Combining global search + top dropdowns + per-column filters)
+  // Filter matched results (Combining global search + top multiselects + per-column filters)
   const filteredResults = matchedResults.filter(item => {
-    // Top bar global search
+    // Top bar search
+    const term = searchTerm.trim();
     const matchesSearch =
-      searchTerm === '' ||
-      item.material.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.categoria.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.comprador.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.numPO.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.tablaDemanda.toLowerCase().includes(searchTerm.toLowerCase());
+      !term ||
+      containsStr(item.material, term) ||
+      containsStr(item.especificaciones, term) ||
+      containsStr(item.categoria, term) ||
+      containsStr(item.comprador, term) ||
+      containsStr(item.numPO, term) ||
+      containsStr(item.tablaDemanda, term) ||
+      containsStr(item.numItem, term) ||
+      containsStr(item.departamento, term) ||
+      item.matchedSuppliersList.some(s =>
+        containsStr(s.nombreComercial, term) ||
+        containsStr(s.razonSocial, term) ||
+        containsStr(s.ruc, term) ||
+        containsStr(s.marcas, term) ||
+        containsStr(s.ofertan, term) ||
+        containsStr(s.contacto, term)
+      );
 
-    const matchesCat = selectedCategory === 'ALL' || item.categoria === selectedCategory;
-    const matchesQuality = selectedQuality === 'ALL' || item.matchQuality === selectedQuality;
+    const isNoneCat = selectedCategories.length === 1 && selectedCategories[0] === '__NONE__';
+    const isNoneBuyer = selectedBuyers.length === 1 && selectedBuyers[0] === '__NONE__';
+    const isNoneQuality = selectedQualities.length === 1 && selectedQualities[0] === '__NONE__';
 
-    // Per-column filters
+    const matchesCat = isNoneCat ? false : (selectedCategories.length === 0 || selectedCategories.includes(item.categoria));
+    const matchesBuyer = isNoneBuyer ? false : (selectedBuyers.length === 0 || selectedBuyers.includes(item.comprador));
+    const matchesQuality = isNoneQuality ? false : (selectedQualities.length === 0 || selectedQualities.includes(item.matchQuality));
+
+    // Per-column text filters
     const matchesColItem =
-      colItem === '' ||
-      String(item.numItem).toLowerCase().includes(colItem.toLowerCase()) ||
-      item.numPO.toLowerCase().includes(colItem.toLowerCase()) ||
-      item.tablaDemanda.toLowerCase().includes(colItem.toLowerCase());
+      !colItem ||
+      containsStr(item.numItem, colItem) ||
+      containsStr(item.numPO, colItem) ||
+      containsStr(item.tablaDemanda, colItem);
 
     const matchesColMaterial =
-      colMaterial === '' ||
-      item.material.toLowerCase().includes(colMaterial.toLowerCase()) ||
-      item.especificaciones.toLowerCase().includes(colMaterial.toLowerCase());
-
-    const matchesColCategory =
-      colCategory === 'ALL' ||
-      item.categoria === colCategory ||
-      item.departamento.toLowerCase().includes(colCategory.toLowerCase());
-
-    const matchesColBuyer = colBuyer === 'ALL' || item.comprador === colBuyer;
+      !colMaterial ||
+      containsStr(item.material, colMaterial) ||
+      containsStr(item.especificaciones, colMaterial);
 
     let matchesColSuppliers = true;
     if (colSuppliers === 'WITH_LOCAL') {
@@ -115,20 +137,21 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
     return (
       matchesSearch &&
       matchesCat &&
+      matchesBuyer &&
       matchesQuality &&
       matchesColItem &&
       matchesColMaterial &&
-      matchesColCategory &&
-      matchesColBuyer &&
       matchesColSuppliers
     );
   });
 
-  const handleResetColumnFilters = () => {
+  const handleResetAllFilters = () => {
+    setSearchTerm('');
+    setSelectedCategories([]);
+    setSelectedBuyers([]);
+    setSelectedQualities([]);
     setColItem('');
     setColMaterial('');
-    setColCategory('ALL');
-    setColBuyer('ALL');
     setColSuppliers('ALL');
   };
 
@@ -370,59 +393,96 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
           <div className="text-2xl font-bold text-purple-300 mt-2">{itemsWithAI}</div>
           <p className="text-[11px] text-slate-400 mt-1">Proveedores externos vía Gemini</p>
         </div>
+
+        {/* Gemini Model Selector Card */}
+        <div className="bg-slate-800/90 border border-purple-800/50 hover:border-purple-600/70 rounded-2xl p-4 shadow-sm flex flex-col justify-between transition">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-purple-300 flex items-center space-x-1.5">
+              <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+              <span>Modelo Gemini IA</span>
+            </span>
+            <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded-full font-mono font-medium">
+              {selectedGeminiModel.split('-')[1] || selectedGeminiModel}
+            </span>
+          </div>
+          <div className="mt-2">
+            <select
+              value={selectedGeminiModel}
+              onChange={e => onSelectGeminiModel && onSelectGeminiModel(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-slate-900 border border-purple-700/60 rounded-xl text-xs text-purple-200 font-medium focus:outline-none focus:border-purple-400 cursor-pointer shadow-sm transition hover:bg-slate-900/90"
+              title="Selecciona la versión de la API de Gemini que se utilizará al buscar proveedores con IA"
+            >
+              <option value="gemini-3.6-flash">Gemini 3.6 Flash (Última versión / Recomendado)</option>
+              <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+              <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+            </select>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1.5 leading-tight">
+            Cambia de modelo libremente desde el frontend para probar resultados.
+          </p>
+        </div>
       </div>
 
       {/* Filters and Controls Bar */}
       <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="flex flex-1 flex-col sm:flex-row items-center gap-3 w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full flex-1">
           {/* Search Input */}
-          <div className="relative w-full sm:w-80">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar por material, comprador, PO..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-            />
+          <div className="relative w-full">
+            <label className="block text-slate-400 text-[11px] mb-1 font-medium">Búsqueda Global</label>
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Buscar por material, PO, etc..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 shadow-sm"
+              />
+            </div>
           </div>
 
-          {/* Category Filter */}
-          <select
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value)}
-            className="w-full sm:w-56 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="ALL">Todas las Categorías ({categories.length})</option>
-            {categories.map(cat => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
+          {/* Multi-Select Category Filter */}
+          <MultiSelectFilter
+            label="Categorías"
+            options={categories}
+            selectedValues={selectedCategories}
+            onChange={setSelectedCategories}
+            placeholder="Todas las Categorías"
+          />
 
-          {/* Match Quality Filter */}
-          <select
-            value={selectedQuality}
-            onChange={e => setSelectedQuality(e.target.value)}
-            className="w-full sm:w-44 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="ALL">Todas las Calidades</option>
-            <option value="Alta">Alta Coincidencia</option>
-            <option value="Media">Media Coincidencia</option>
-            <option value="Sugerida">Sugerida / Dominio</option>
-          </select>
+          {/* Multi-Select Buyer Filter */}
+          <MultiSelectFilter
+            label="Compradores"
+            options={buyers}
+            selectedValues={selectedBuyers}
+            onChange={setSelectedBuyers}
+            placeholder="Todos los Compradores"
+          />
+
+          {/* Multi-Select Match Quality Filter */}
+          <MultiSelectFilter
+            label="Calidad de Coincidencia"
+            options={['Alta', 'Media', 'Sugerida']}
+            selectedValues={selectedQualities}
+            onChange={setSelectedQualities}
+            placeholder="Todas las Calidades"
+          />
         </div>
 
         {/* Export Button */}
-        <button
-          onClick={handleExportExcel}
-          disabled={matchedResults.length === 0}
-          className="w-full md:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition shadow-sm disabled:opacity-50 cursor-pointer"
-        >
-          <Download className="w-4 h-4" />
-          <span>Exportar Reporte Excel</span>
-        </button>
+        <div className="w-full md:w-auto self-end pt-1">
+          <button
+            onClick={handleExportExcel}
+            disabled={matchedResults.length === 0}
+            className="w-full md:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition shadow-sm disabled:opacity-50 cursor-pointer shrink-0"
+          >
+            <Download className="w-4 h-4" />
+            <span>Exportar Excel Filtrado</span>
+          </button>
+        </div>
       </div>
 
       {/* Results Table */}
@@ -436,13 +496,13 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
               </span>
             </h3>
 
-            {(colItem || colMaterial || colCategory !== 'ALL' || colBuyer !== 'ALL' || colSuppliers !== 'ALL') && (
+            {(searchTerm || selectedCategories.length > 0 || selectedBuyers.length > 0 || selectedQualities.length > 0 || colItem || colMaterial || colSuppliers !== 'ALL') && (
               <button
-                onClick={handleResetColumnFilters}
+                onClick={handleResetAllFilters}
                 className="px-2.5 py-1 text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg flex items-center space-x-1 hover:bg-amber-500/30 transition cursor-pointer"
               >
                 <RefreshCw className="w-3 h-3" />
-                <span>Limpiar Filtros de Columna</span>
+                <span>Restablecer Filtros</span>
               </button>
             )}
           </div>
@@ -465,14 +525,9 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
           <div className="p-12 text-center text-slate-400 space-y-3">
             <AlertCircle className="w-10 h-10 mx-auto text-amber-400/80 mb-1" />
             <p className="text-sm font-medium text-slate-300">No se encontraron requerimientos que coincidan con los filtros aplicados.</p>
-            <p className="text-xs text-slate-500">Prueba limpiando o ajustando los filtros por columna arriba.</p>
+            <p className="text-xs text-slate-500">Prueba limpiando o ajustando los términos de búsqueda y filtros arriba.</p>
             <button
-              onClick={() => {
-                setSearchTerm('');
-                setSelectedCategory('ALL');
-                setSelectedQuality('ALL');
-                handleResetColumnFilters();
-              }}
+              onClick={handleResetAllFilters}
               className="px-4 py-2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold inline-flex items-center space-x-1.5 hover:bg-amber-500/30 transition cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -508,7 +563,7 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
                     <th className="p-2">
                       <input
                         type="text"
-                        placeholder="Filtrar material o especificación..."
+                        placeholder="Filtrar material..."
                         value={colMaterial}
                         onChange={e => setColMaterial(e.target.value)}
                         className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 font-normal"
@@ -516,33 +571,23 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
                     </th>
 
                     <th className="p-2">
-                      <select
-                        value={colCategory}
-                        onChange={e => setColCategory(e.target.value)}
-                        className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-normal"
-                      >
-                        <option value="ALL">Todas Cat. ({categories.length})</option>
-                        {categories.map(cat => (
-                          <option key={cat} value={cat}>
-                            {cat}
-                          </option>
-                        ))}
-                      </select>
+                      <MultiSelectFilter
+                        label=""
+                        options={categories}
+                        selectedValues={selectedCategories}
+                        onChange={setSelectedCategories}
+                        placeholder="Filtrar Cat."
+                      />
                     </th>
 
                     <th className="p-2">
-                      <select
-                        value={colBuyer}
-                        onChange={e => setColBuyer(e.target.value)}
-                        className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-normal"
-                      >
-                        <option value="ALL">Todos Compr. ({buyers.length})</option>
-                        {buyers.map(b => (
-                          <option key={b} value={b}>
-                            {b}
-                          </option>
-                        ))}
-                      </select>
+                      <MultiSelectFilter
+                        label=""
+                        options={buyers}
+                        selectedValues={selectedBuyers}
+                        onChange={setSelectedBuyers}
+                        placeholder="Filtrar Compr."
+                      />
                     </th>
 
                     <th className="p-2">
@@ -559,11 +604,11 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
                     </th>
 
                     <th className="p-2 text-right">
-                      {(colItem || colMaterial || colCategory !== 'ALL' || colBuyer !== 'ALL' || colSuppliers !== 'ALL') && (
+                      {(searchTerm || selectedCategories.length > 0 || selectedBuyers.length > 0 || selectedQualities.length > 0 || colItem || colMaterial || colSuppliers !== 'ALL') && (
                         <button
-                          onClick={handleResetColumnFilters}
+                          onClick={handleResetAllFilters}
                           className="px-2 py-1 text-[10px] bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/30 rounded-lg font-medium transition cursor-pointer"
-                          title="Limpiar filtros de columna"
+                          title="Limpiar todos los filtros"
                         >
                           Limpiar
                         </button>
@@ -575,8 +620,14 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
               <tbody className="divide-y divide-slate-700/60 text-xs text-slate-300">
                 {filteredResults.map(item => {
                   const isExpanded = expandedRow === item.numItem;
+                  const catUpper = (item.categoria || '').trim().toUpperCase();
+                  const matUpper = (item.material || '').trim().toUpperCase();
                   const isSearchingThisCategory =
-                    isLoadingAI && activeCategorySearching === item.categoria;
+                    isLoadingAI &&
+                    (activeCategorySearching === catUpper ||
+                     activeCategorySearching === item.categoria ||
+                     activeCategorySearching === matUpper ||
+                     activeCategorySearching === item.material);
 
                   return (
                     <React.Fragment key={item.numItem}>
@@ -659,11 +710,12 @@ export const SupplierSearchTab: React.FC<SupplierSearchTabProps> = ({
                           <button
                             onClick={e => {
                               e.stopPropagation();
-                              onRunAISearch(item.categoria);
+                              setExpandedRow(item.numItem);
+                              onRunAISearch(item.categoria, item.material);
                             }}
-                            disabled={isSearchingThisCategory}
-                            className="px-3 py-1.5 bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-700/50 rounded-lg text-xs font-medium inline-flex items-center space-x-1.5 transition disabled:opacity-50 cursor-pointer"
-                            title="Buscar proveedores externos adicionales para esta categoría usando IA"
+                            disabled={isLoadingAI}
+                            className="px-3 py-1.5 bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-700/50 rounded-lg text-xs font-medium inline-flex items-center space-x-1.5 transition disabled:opacity-50 cursor-pointer shadow-sm hover:scale-105 active:scale-95"
+                            title="Buscar proveedores externos adicionales para esta categoría o ítem usando IA"
                           >
                             <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${isSearchingThisCategory ? 'animate-spin' : ''}`} />
                             <span>{isSearchingThisCategory ? 'Buscando...' : 'Buscar IA'}</span>
